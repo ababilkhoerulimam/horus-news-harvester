@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Harvester state and credentials
+config/twitter_session.json
+data/state/
+data/raw/

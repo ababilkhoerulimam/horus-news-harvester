@@ -34,6 +34,14 @@ def main():
     extract_parser.add_argument("--url", "-u", required=True, help="Target article URL")
     extract_parser.add_argument("--channel", "-c", default="portal_news", help="Channel identifier")
 
+    # sync-firefox-twitter command
+    subparsers.add_parser("sync-firefox-twitter", help="Auto-extract Twitter session from local Firefox profile")
+
+    # set-twitter-session command
+    session_parser = subparsers.add_parser("set-twitter-session", help="Manually save Twitter auth_token and ct0 tokens")
+    session_parser.add_argument("--auth-token", required=True, help="Twitter auth_token cookie")
+    session_parser.add_argument("--ct0", required=True, help="Twitter ct0 CSRF cookie")
+
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -70,6 +78,28 @@ def main():
                 print("\n... [truncated] ...")
         else:
             print(f"[!] Extraction failed: {result.get('error', 'Unknown error')}")
+
+    elif args.command == "sync-firefox-twitter":
+        from backends.firefox_cookies import extract_firefox_twitter_tokens, save_twitter_session
+        print("[*] Scanning Firefox profiles for active Twitter session...")
+        tokens = extract_firefox_twitter_tokens()
+        if tokens:
+            save_twitter_session(tokens)
+            print(f"[+] Extracted active session from Firefox profile '{tokens.get('profile')}'.")
+            print("[+] Saved to config/twitter_session.json. GraphQL backend is now active!")
+        else:
+            print("[!] No active Twitter session found in Firefox cookies.")
+            print("    Make sure you have logged into x.com in Firefox.")
+
+    elif args.command == "set-twitter-session":
+        from backends.firefox_cookies import save_twitter_session
+        tokens = {
+            "auth_token": args.auth_token,
+            "ct0": args.ct0,
+            "profile": "manual_input"
+        }
+        save_twitter_session(tokens)
+        print("[+] Manually saved Twitter session to config/twitter_session.json.")
 
     else:
         parser.print_help()

@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import SportsChannel
 from backends.jina_reader import JinaReaderBackend
+from backends.firefox_cookies import load_twitter_session, extract_firefox_twitter_tokens, save_twitter_session
+from backends.twitter_graphql import TwitterGraphQLBackend
 from processors.cleaner import clean_news_text
 
 SYNDICATION_URL = "https://syndication.twitter.com/srv/timeline-profile/screen-name/{username}"
@@ -26,11 +28,29 @@ class TwitterChannel(SportsChannel):
 
     name = "social_twitter"
     description = "Twitter/X Diskusi Komunitas dan Influencer Olahraga Indonesia"
-    backends = ["syndication_api", "jina_reader", "twitter_cli"]
+    backends = ["graphql_api", "syndication_api", "jina_reader", "twitter_cli"]
     tier = 0
 
     def __init__(self):
         self.jina = JinaReaderBackend()
+        self.graphql_client = None
+        self._init_session()
+
+    def _init_session(self):
+        # 1. Try saved session file
+        session = load_twitter_session()
+        # 2. If not found, attempt auto-extract from Firefox
+        if not session:
+            extracted = extract_firefox_twitter_tokens()
+            if extracted:
+                save_twitter_session(extracted)
+                session = extracted
+
+        if session:
+            auth_token = session.get("auth_token")
+            ct0 = session.get("ct0")
+            if auth_token and ct0:
+                self.graphql_client = TwitterGraphQLBackend(auth_token, ct0)
 
     def can_handle(self, url_or_source: str) -> bool:
         url_lower = url_or_source.lower()
@@ -38,6 +58,9 @@ class TwitterChannel(SportsChannel):
 
     def check(self, config: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
         cli_present = shutil.which("twitter-cli") is not None or shutil.which("bird") is not None
+        if self.graphql_client:
+            self.active_backend = "graphql_api"
+            return "ok", "Active: graphql_api (Firefox session authenticated)"
         self.active_backend = "syndication_api"
         status_msg = f"Active: syndication_api, twitter_cli: {'available' if cli_present else 'not found'}"
         return "ok", status_msg
@@ -185,7 +208,10 @@ class TwitterChannel(SportsChannel):
 
         for backend in candidates:
             tweets = []
-            if backend == "syndication_api":
+            if backend == "graphql_api" and self.graphql_client:
+                # Search user tweets via GraphQL search
+                tweets = self.graphql_client.search_tweets(f"from:{clean_user}", limit=limit)
+            elif backend == "syndication_api":
                 tweets = self._fetch_syndication(clean_user, limit=limit)
             elif backend == "jina_reader":
                 tweets = self._fetch_jina(clean_user, limit=limit)
@@ -208,6 +234,15 @@ class TwitterChannel(SportsChannel):
     ) -> List[Dict[str, Any]]:
         if query.startswith("@") or "x.com" in query or "twitter.com" in query:
             return self.get_user_tweets(query, sport=sport, limit=limit, config=config)
+
+        candidates = self.ordered_backends(config)
+        for backend in candidates:
+            if backend == "graphql_api" and self.graphql_client:
+                items = self.graphql_client.search_tweets(query, limit=limit)
+                if items:
+                    for it in items:
+                        it["sport"] = sport
+                    return items
 
         search_url = f"https://x.com/search?q={urllib.parse.quote(query)}"
         res = self.jina.extract(search_url)
