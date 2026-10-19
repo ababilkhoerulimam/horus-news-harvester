@@ -1,5 +1,0 @@
-{
-  "deprecated": true,
-  "notice": "This file is deprecated. Indonesian media portals catalog has been generalized and moved to config/portals_catalog.json",
-  "canonical_path": "config/portals_catalog.json"
-}

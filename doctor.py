@@ -79,7 +79,6 @@ def format_doctor_report(doc: Dict[str, Any]) -> str:
     """Formats diagnostic report as clean text."""
     lines = [
         "Indonesian Sports Scrapper - Health Report",
-        "============================================",
         "Channel Availability:",
     ]
     for ch_name, info in doc.get("channels", {}).items():

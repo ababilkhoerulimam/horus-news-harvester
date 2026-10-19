@@ -41,7 +41,6 @@ def analyze_sites():
 
     catalog = []
     print(f"{'No.':<4} {'Site Identifier':<30} {'Articles':<10} {'Percentage':<10} {'Sample Headline'}")
-    print("-" * 90)
 
     for idx, (site, count) in enumerate(site_counter.most_common(), 1):
         pct = (count / total_articles) * 100
