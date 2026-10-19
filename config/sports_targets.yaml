@@ -1,0 +1,580 @@
+# Target Configuration for Indonesian Sports Harvester
+
+sports:
+  football:
+    name: "Sepak Bola"
+    leagues:
+      - id: "liga_1"
+        name: "Liga 1 Indonesia"
+        keywords:
+          - "Liga 1"
+          - "Super League"
+          - "Piala Presiden"
+      - id: "timnas_football"
+        name: "Timnas Sepak Bola Indonesia"
+        keywords:
+          - "Timnas Indonesia"
+          - "PSSI"
+          - "Shin Tae-yong"
+          - "Kualifikasi Piala Dunia"
+    top_clubs:
+      - "Persib Bandung"
+      - "Persija Jakarta"
+      - "Persebaya Surabaya"
+      - "Arema FC"
+      - "Bali United"
+      - "PSM Makassar"
+      - "Borneo FC"
+      - "Dewa United FC"
+
+  basketball:
+    name: "Bola Basket"
+    leagues:
+      - id: "ibl"
+        name: "Indonesian Basketball League"
+        keywords:
+          - "IBL"
+          - "Indonesian Basketball League"
+          - "Perbasi"
+      - id: "timnas_basket"
+        name: "Timnas Basket Indonesia"
+        keywords:
+          - "Timnas Basket"
+          - "FIBA Asia"
+    top_clubs:
+      - "Satria Muda Pertamina"
+      - "Pelita Jaya Bakrie"
+      - "Prawira Harum Bandung"
+      - "RANS Simba Bogor"
+      - "Dewa United Banten"
+      - "Kesatria Bengawan Solo"
+
+  badminton:
+    name: "Bulu Tangkis"
+    governing_body: "PBSI"
+    keywords:
+      - "PBSI"
+      - "Bulu Tangkis"
+      - "Indonesia Open"
+      - "Indonesia Masters"
+      - "All England"
+      - "Thomas Cup"
+      - "Uber Cup"
+    focal_athletes:
+      - "Jonatan Christie"
+      - "Anthony Sinisuka Ginting"
+      - "Fajar Alfian"
+      - "Muhammad Rian Ardianto"
+      - "Gregoria Mariska Tunjung"
+
+  volleyball:
+    name: "Bola Voli"
+    leagues:
+      - id: "proliga"
+        name: "Proliga"
+        keywords:
+          - "Proliga"
+          - "PBVSI"
+          - "Voli Indonesia"
+    top_clubs:
+      - "Jakarta LavAni"
+      - "Jakarta Bhayangkara Presisi"
+      - "Jakarta STIN BIN"
+      - "Bandung bjb Tandamata"
+
+portals:
+  antara:
+    name: "LKBN Antara Olahraga"
+    base_url: "https://www.antaranews.com"
+    search_endpoint: "https://www.antaranews.com/search"
+    rss_feed: "https://www.antaranews.com/rss/olahraga.xml"
+    rate_limit_sec: 1.0
+    tier: 1
+  detik:
+    name: "Detik Sport / Sepakbola"
+    base_url: "https://sport.detik.com"
+    search_endpoint: "https://www.detik.com/search/searchall"
+    rss_feed: "https://rss.detik.com/index.php/sepakbola"
+    rate_limit_sec: 1.0
+    tier: 1
+  kompas:
+    name: "Kompas.com Bola"
+    base_url: "https://bola.kompas.com"
+    search_endpoint: "https://search.kompas.com/search"
+    rss_feed: "https://bola.kompas.com/rss"
+    rate_limit_sec: 1.2
+    tier: 1
+  cnn_indonesia:
+    name: "CNN Indonesia Olahraga"
+    base_url: "https://www.cnnindonesia.com/olahraga"
+    search_endpoint: "https://www.cnnindonesia.com/search"
+    rss_feed: "https://www.cnnindonesia.com/olahraga/rss"
+    rate_limit_sec: 1.2
+    tier: 1
+  tempo:
+    name: "Tempo Bola"
+    base_url: "https://bola.tempo.co"
+    search_endpoint: "https://www.tempo.co/search"
+    rss_feed: "https://rss.tempo.co/bola"
+    rate_limit_sec: 1.0
+    tier: 1
+  republika:
+    name: "Republika Sepakbola & Arena"
+    base_url: "https://republika.co.id"
+    search_endpoint: "https://republika.co.id/search"
+    rss_feed: "https://www.republika.co.id/rss/sepakbola"
+    rate_limit_sec: 1.0
+    tier: 1
+  jawapos:
+    name: "Jawa Pos Sepak Bola"
+    base_url: "https://www.jawapos.com/sepak-bola"
+    search_endpoint: "https://www.jawapos.com/search"
+    rss_feed: "https://www.jawapos.com/rss"
+    rate_limit_sec: 1.0
+    tier: 1
+  tribunnews:
+    name: "Tribunnews Superskor"
+    base_url: "https://www.tribunnews.com/superskor"
+    search_endpoint: "https://www.tribunnews.com/search"
+    rss_feed: "https://www.tribunnews.com/rss/superskor"
+    rate_limit_sec: 1.5
+    tier: 1
+  harian_jogja:
+    name: "Harian Jogja Sport"
+    base_url: "https://jogjapolitan.harianjogja.com/sport"
+    search_endpoint: "https://harianjogja.com/search"
+    rss_feed: "https://harianjogja.com/rss"
+    rate_limit_sec: 1.0
+    tier: 2
+  tvone:
+    name: "tvOne News Sport"
+    base_url: "https://www.tvonenews.com/sport"
+    search_endpoint: "https://www.tvonenews.com/search"
+    rss_feed: "https://www.tvonenews.com/rss/sport"
+    rate_limit_sec: 1.0
+    tier: 1
+  suara:
+    name: "Suara.com Bola"
+    base_url: "https://www.suara.com/bola"
+    search_endpoint: "https://www.suara.com/search"
+    rss_feed: "https://www.suara.com/rss/bola"
+    rate_limit_sec: 1.0
+    tier: 1
+  sindo:
+    name: "SINDOnews Sports"
+    base_url: "https://sports.sindonews.com"
+    search_endpoint: "https://search.sindonews.com/search"
+    rss_feed: "https://sports.sindonews.com/rss"
+    rate_limit_sec: 1.0
+    tier: 1
+  liputan6:
+    name: "Liputan6 Bola"
+    base_url: "https://www.liputan6.com/bola"
+    search_endpoint: "https://www.liputan6.com/search"
+    rss_feed: "https://feed.liputan6.com/rss/bola"
+    rate_limit_sec: 1.2
+    tier: 1
+  beritajatim:
+    name: "BeritaJatim Olahraga"
+    base_url: "https://beritajatim.com/olahraga"
+    search_endpoint: "https://beritajatim.com/?s="
+    rss_feed: "https://beritajatim.com/feed"
+    rate_limit_sec: 1.0
+    tier: 2
+
+social_channels:
+  youtube:
+    timnas_official:
+      name: "PSSI / Timnas Official"
+      channel_id: "UCqZ0R93NlC8F8bUaH_Q1e1g"
+      handle: "@PSSI"
+      sport: "football"
+      category: "official"
+    liga1_official:
+      name: "BRI Liga 1 Match Official"
+      channel_id: "UC1o2u3v4x5y6z7a8b9c0d1e"
+      handle: "@Liga1MatchOfficial"
+      sport: "football"
+      category: "official"
+    ibl_official:
+      name: "IBL TV Official"
+      channel_id: "UC2b3c4d5e6f7g8h9i0j1k2l"
+      handle: "@IBLTVOfficial"
+      sport: "basketball"
+      category: "official"
+    badminton_ina:
+      name: "Badminton Indonesia / PBSI Official"
+      channel_id: "UC3c4d5e6f7g8h9i0j1k2l3m"
+      handle: "@badminton_ina"
+      sport: "badminton"
+      category: "official"
+    proliga_official:
+      name: "Official Voli TV / Proliga"
+      channel_id: "UC4d5e6f7g8h9i0j1k2l3m4n"
+      handle: "@officialvolitv"
+      sport: "volleyball"
+      category: "official"
+    kompas_sport:
+      name: "Kompas Sports"
+      channel_id: "UC5e6f7g8h9i0j1k2l3m4n5o"
+      handle: "@KompasSports"
+      sport: "general"
+      category: "media"
+    jebreeet_media:
+      name: "JEBREEETmedia TV"
+      handle: "@jebreeetmedia"
+      sport: "football"
+      category: "influencer"
+    coach_justin:
+      name: "Justinus Laksana (Coach Justin)"
+      handle: "@JustinusLaksana"
+      sport: "football"
+      category: "influencer"
+    bung_binder:
+      name: "Bola Bung Binder"
+      handle: "@BolaBungBinder"
+      sport: "football"
+      category: "influencer"
+    bung_ropan:
+      name: "Bung Ropan"
+      handle: "@BungRopan"
+      sport: "football"
+      category: "influencer"
+    box2box_id:
+      name: "Box2Box Bola"
+      handle: "@Box2BoxID"
+      sport: "football"
+      category: "community"
+    sport77_official:
+      name: "Sport77 Official"
+      handle: "@Sport77Official"
+      sport: "football"
+      category: "podcast"
+    vivagoal_indonesia:
+      name: "Vivagoal Indonesia"
+      handle: "@VivagoalIndonesia"
+      sport: "football"
+      category: "media"
+    starting_eleven:
+      name: "Starting Eleven"
+      handle: "@StartingElevenID"
+      sport: "football"
+      category: "media"
+    taufik_hidayat_arena:
+      name: "Taufik Hidayat Arena"
+      handle: "@taufikhidayatarena"
+      sport: "badminton"
+      category: "influencer"
+    bhulukhuduk_tv:
+      name: "Bhulukhuduk TV"
+      handle: "@BhulukhudukTV"
+      sport: "badminton"
+      category: "community"
+    mainbasket_tv:
+      name: "Mainbasket TV"
+      handle: "@mainbasket"
+      sport: "basketball"
+      category: "community"
+    dbl_play:
+      name: "DBL Play"
+      handle: "@DBLPlay"
+      sport: "basketball"
+      category: "community"
+    rivan_nurmulki_yt:
+      name: "Rivan Nurmulki"
+      handle: "@rivannurmulki"
+      sport: "volleyball"
+      category: "influencer"
+    wilda_fadhilah_yt:
+      name: "Wilda Nurfadhilah"
+      handle: "@fadhilahwilda"
+      sport: "volleyball"
+      category: "influencer"
+
+  influencers:
+    football:
+      - name: "Justinus Laksana (Coach Justin)"
+        handle: "JustinusLaksana"
+        platform: ["youtube", "twitter_x"]
+        role: "pundit"
+      - name: "Binder Singh (Bung Binder)"
+        handle: "BolaBungBinder"
+        platform: ["youtube", "twitter_x"]
+        role: "pundit"
+      - name: "Tommy Welly (Bung Towel)"
+        handle: "towel_official"
+        platform: ["youtube", "twitter_x"]
+        role: "pundit"
+      - name: "Ronny Pangemanan (Bung Ropan)"
+        handle: "BungRopan"
+        platform: ["youtube", "twitter_x"]
+        role: "pundit"
+      - name: "Valentino Simanjuntak"
+        handle: "radotvalent"
+        platform: ["youtube", "twitter_x", "instagram"]
+        role: "commentator"
+      - name: "Mamat Alkatiri & Ripan (Sport77)"
+        handle: "Sport77Official"
+        platform: ["youtube", "twitter_x"]
+        role: "sports_podcast_hosts"
+      - name: "Panji Suryono"
+        handle: "panjisuryono7"
+        platform: ["twitter_x", "youtube"]
+        role: "tactical_analyst"
+    badminton:
+      - name: "Yuni Kartika"
+        handle: "YuniKartika73"
+        platform: ["twitter_x", "instagram"]
+        role: "former_athlete_pundit"
+      - name: "Gillian Clark (Oma Gill)"
+        handle: "OmaGill"
+        platform: ["twitter_x"]
+        role: "international_commentator"
+      - name: "Taufik Hidayat"
+        handle: "taufikhidayatarena"
+        platform: ["youtube", "instagram"]
+        role: "legend_analyst"
+      - name: "Hendra Setiawan"
+        handle: "hendrasetiawan"
+        platform: ["youtube", "instagram"]
+        role: "legend_active_player"
+    basketball:
+      - name: "Augie Fantinus"
+        handle: "augiefantinus"
+        platform: ["youtube", "instagram"]
+        role: "enthusiast_host"
+      - name: "Denny Sumargo"
+        handle: "sumargodenny"
+        platform: ["youtube"]
+        role: "former_athlete_influencer"
+      - name: "Daniel Wenas"
+        handle: "danielwenas"
+        platform: ["twitter_x", "instagram"]
+        role: "pro_player_creator"
+      - name: "Rocky Padila"
+        handle: "rockypadila"
+        platform: ["youtube", "twitter_x"]
+        role: "basketball_podcast_host"
+    volleyball:
+      - name: "Rivan Nurmulki"
+        handle: "rivannurmulki"
+        platform: ["instagram", "youtube", "twitter_x"]
+        role: "athlete_influencer"
+      - name: "Wilda Siti Nurfadhilah"
+        handle: "wildanurfadhilah"
+        platform: ["instagram", "youtube"]
+        role: "athlete_influencer"
+      - name: "Megawati Hangestri Pertiwi"
+        handle: "megawatikhangestri"
+        platform: ["instagram", "youtube"]
+        role: "international_star_athlete"
+      - name: "Farhan Halim"
+        handle: "farhanhalim14"
+        platform: ["instagram", "youtube"]
+        role: "national_star_athlete"
+
+  communities:
+    football:
+      - name: "Extra Time Indonesia"
+        handle: "idextratime"
+        platform: ["twitter_x", "instagram"]
+        role: "news_discussion"
+      - name: "Fakta Sepakbola"
+        handle: "FaktaSepakbola"
+        platform: ["twitter_x"]
+        role: "stats_facts"
+      - name: "Box2Box ID"
+        handle: "Box2BoxBola"
+        platform: ["twitter_x", "youtube", "podcast"]
+        role: "football_podcast_network"
+      - name: "Mafia Wasit"
+        handle: "MafiaWasit"
+        platform: ["twitter_x"]
+        role: "satire_investigative_community"
+      - name: "Indo Transfer"
+        handle: "indo_transfer"
+        platform: ["twitter_x"]
+        role: "transfer_market_rumors"
+      - name: "Pengamat Sepakbola"
+        handle: "pengamatsepakbola"
+        platform: ["twitter_x", "instagram"]
+        role: "league_news_aggregator"
+      - name: "La Grande Indonesia"
+        handle: "LaGrandeIndo"
+        platform: ["twitter_x"]
+        role: "national_team_ultras"
+      - name: "Ultras Garuda"
+        handle: "UltrasGaruda_"
+        platform: ["twitter_x"]
+        role: "national_team_supporters"
+    badminton:
+      - name: "Badminton Talk"
+        handle: "BadmintonTalk"
+        platform: ["twitter_x", "instagram"]
+        role: "scores_stats_discussion"
+      - name: "Djarum Badminton"
+        handle: "DjarumBadminton"
+        platform: ["twitter_x", "youtube"]
+        role: "grassroots_coverage"
+      - name: "Bhulukhuduk TV"
+        handle: "bhulukhuduktv"
+        platform: ["twitter_x", "youtube"]
+        role: "badminton_creator_community"
+    basketball:
+      - name: "Mainbasket"
+        handle: "mainbasket"
+        platform: ["twitter_x", "youtube", "web"]
+        role: "basketball_community_media"
+      - name: "DBL Indonesia"
+        handle: "dblindonesia"
+        platform: ["twitter_x", "youtube", "instagram"]
+        role: "youth_basketball_league"
+    volleyball:
+      - name: "Voli Indo"
+        handle: "VoliIndo"
+        platform: ["twitter_x", "instagram"]
+        role: "volleyball_fan_community"
+      - name: "Jurnal Voli"
+        handle: "jurnalvoli"
+        platform: ["twitter_x", "instagram"]
+        role: "proliga_news_discussion"
+
+  twitter_x:
+    pssi_official:
+      name: "PSSI Official"
+      username: "PSSI"
+      sport: "football"
+      type: "federation"
+    liga1_match:
+      name: "BRI Liga 1"
+      username: "Liga1Match"
+      sport: "football"
+      type: "league"
+    ina_badminton:
+      name: "Badminton Indonesia"
+      username: "INABadminton"
+      sport: "badminton"
+      type: "federation"
+    ibl_indonesia:
+      name: "IBL Indonesia"
+      username: "IBLIndonesia"
+      sport: "basketball"
+      type: "league"
+    voli_indo:
+      name: "Voli Indo"
+      username: "VoliIndo"
+      sport: "volleyball"
+      type: "community"
+    extra_time_id:
+      name: "Extra Time Indonesia"
+      username: "idextratime"
+      sport: "football"
+      type: "community"
+    fakta_sepakbola:
+      name: "Fakta Sepakbola"
+      username: "FaktaSepakbola"
+      sport: "football"
+      type: "community"
+    box2box_bola:
+      name: "Box2Box Bola"
+      username: "Box2BoxBola"
+      sport: "football"
+      type: "community"
+    mafia_wasit:
+      name: "Mafia Wasit"
+      username: "MafiaWasit"
+      sport: "football"
+      type: "community"
+    indo_transfer:
+      name: "Indo Transfer"
+      username: "indo_transfer"
+      sport: "football"
+      type: "community"
+    pengamat_sepakbola:
+      name: "Pengamat Sepakbola"
+      username: "pengamatsepakbola"
+      sport: "football"
+      type: "community"
+    lagrande_indo:
+      name: "La Grande Indonesia"
+      username: "LaGrandeIndo"
+      sport: "football"
+      type: "community"
+    ultras_garuda:
+      name: "Ultras Garuda"
+      username: "UltrasGaruda_"
+      sport: "football"
+      type: "community"
+    badminton_talk:
+      name: "Badminton Talk"
+      username: "BadmintonTalk"
+      sport: "badminton"
+      type: "community"
+    bhulukhuduk_x:
+      name: "Bhulukhuduk TV"
+      username: "bhulukhuduktv"
+      sport: "badminton"
+      type: "community"
+    main_basket:
+      name: "Mainbasket"
+      username: "mainbasket"
+      sport: "basketball"
+      type: "community"
+    dbl_indonesia:
+      name: "DBL Indonesia"
+      username: "dblindonesia"
+      sport: "basketball"
+      type: "community"
+    jurnal_voli:
+      name: "Jurnal Voli"
+      username: "jurnalvoli"
+      sport: "volleyball"
+      type: "community"
+    justin_laksana:
+      name: "Coach Justin"
+      username: "CoachJustinL"
+      sport: "football"
+      type: "influencer"
+    bung_binder:
+      name: "Bung Binder"
+      username: "BolaBungBinder"
+      sport: "football"
+      type: "influencer"
+    bung_towel:
+      name: "Bung Towel"
+      username: "towel_official"
+      sport: "football"
+      type: "influencer"
+    bung_ropan:
+      name: "Bung Ropan"
+      username: "BungRopan"
+      sport: "football"
+      type: "influencer"
+    radot_valent:
+      name: "Valentino Jebreeet"
+      username: "radotvalent"
+      sport: "football"
+      type: "influencer"
+    sport77_official:
+      name: "Sport77 Official"
+      username: "sport77official"
+      sport: "football"
+      type: "podcast"
+    yuni_kartika:
+      name: "Yuni Kartika"
+      username: "YuniKartika73"
+      sport: "badminton"
+      type: "influencer"
+    rivan_nurmulki:
+      name: "Rivan Nurmulki"
+      username: "rivannurmulki"
+      sport: "volleyball"
+      type: "influencer"
+
+ingestion_defaults:
+  max_articles_per_portal: 20
+  max_comments_per_video: 50
+  max_tweets_per_account: 30
+  scan_antibot_bytes: 4096
+  output_format: "jsonl"
+  raw_data_dir: "data/raw"
