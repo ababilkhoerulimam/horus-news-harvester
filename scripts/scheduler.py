@@ -17,6 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.local_harvester import run_local_harvest
 from processors.state_store import StateStore
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = str(REPO_ROOT / "config" / "sports_targets.yaml")
+DEFAULT_STATE_DB = str(REPO_ROOT / "data" / "state" / "harvest_state.db")
+
 RUNNING = True
 
 
@@ -31,8 +35,8 @@ class HarvestScheduler:
 
     def __init__(
         self,
-        config_path: str = "config/sports_targets.yaml",
-        state_db_path: str = "data/state/harvest_state.db",
+        config_path: str = DEFAULT_CONFIG,
+        state_db_path: str = DEFAULT_STATE_DB,
         news_interval_sec: int = 1800,
         twitter_interval_sec: int = 3600,
         youtube_interval_sec: int = 10800,
@@ -110,8 +114,8 @@ class HarvestScheduler:
 def main():
     parser = argparse.ArgumentParser(description="Indonesian Sports Harvester Interval Scheduler")
     parser.add_argument("--once", action="store_true", help="Run a single harvest cycle for all channels and exit")
-    parser.add_argument("--config", default="config/sports_targets.yaml", help="Path to sports targets yaml")
-    parser.add_argument("--state-db", default="data/state/harvest_state.db", help="Path to SQLite state db")
+    parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to sports targets yaml")
+    parser.add_argument("--state-db", default=DEFAULT_STATE_DB, help="Path to SQLite state db")
     parser.add_argument("--news-interval", type=int, default=1800, help="News check interval in seconds")
     parser.add_argument("--twitter-interval", type=int, default=3600, help="Twitter check interval in seconds")
     parser.add_argument("--youtube-interval", type=int, default=10800, help="YouTube check interval in seconds")

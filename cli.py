@@ -42,6 +42,51 @@ def main():
     session_parser.add_argument("--auth-token", required=True, help="Twitter auth_token cookie")
     session_parser.add_argument("--ct0", required=True, help="Twitter ct0 CSRF cookie")
 
+    # harvest command
+    harvest_parser = subparsers.add_parser("harvest", help="Run local sports harvest cycle across all channels")
+    harvest_parser.add_argument("--limit", "-l", type=int, default=5, help="Items per target/keyword")
+    harvest_parser.add_argument("--workers", "-w", type=int, default=5, help="Concurrent worker threads (default: 5)")
+    harvest_parser.add_argument("--no-news", action="store_true", help="Skip news portal harvesting")
+    harvest_parser.add_argument("--no-youtube", action="store_true", help="Skip YouTube harvesting")
+    harvest_parser.add_argument("--no-twitter", action="store_true", help="Skip Twitter/X harvesting")
+    harvest_parser.add_argument("--proxy", default=None, help="Direct HTTP proxy endpoint (e.g. http://user:pass@ip:port)")
+    harvest_parser.add_argument("--proxies-file", default=None, help="Path to text file containing rotating proxy list")
+
+    # export command
+    export_parser = subparsers.add_parser("export", help="Export raw JSONL data into high-performance SQLite, DuckDB, or Parquet datasets")
+    export_parser.add_argument("--format", "-f", default="sqlite", choices=["sqlite", "duckdb", "parquet"], help="Analytical output format (default: sqlite)")
+    export_parser.add_argument("--output", "-o", default=None, help="Output file/directory path")
+    export_parser.add_argument("--raw-dir", default="data/raw", help="Base raw data directory (default: data/raw)")
+    export_parser.add_argument("--channels", "-c", nargs="+", choices=["news", "youtube", "twitter"], default=None, help="Channels to export (default: all)")
+
+    # backup command
+    backup_parser = subparsers.add_parser("backup", help="Create gzip compressed archive of datasets and sync to cloud storage")
+    backup_parser.add_argument("--output-dir", "-o", default="data/backups", help="Destination backup directory (default: data/backups)")
+    backup_parser.add_argument("--upload-url", "-u", default=None, help="Presigned S3/R2 PUT URL for automated cloud cold-storage sync")
+
+    # backfill command
+    backfill_parser = subparsers.add_parser("backfill", help="Harvest historical football articles via XML sitemaps and archives")
+    backfill_parser.add_argument("--portal", "-p", choices=["detik", "antara", "kompas", "bolanet", "sindonews", "skor"], default=None, help="Target portal (default: all primary football portals)")
+    backfill_parser.add_argument("--sitemap", "-s", default=None, help="Direct XML sitemap URL to parse")
+    backfill_parser.add_argument("--days", "-d", type=int, default=None, help="Past days to crawl (e.g. 365 for 1 year, 7 for weekly)")
+    backfill_parser.add_argument("--start-date", default=None, help="Archive start date (YYYY-MM-DD)")
+    backfill_parser.add_argument("--end-date", default=None, help="Archive end date (YYYY-MM-DD)")
+    backfill_parser.add_argument("--mode", "-m", choices=["sitemap", "archive", "both"], default="both", help="Harvesting mode (default: both)")
+    backfill_parser.add_argument("--resume", "-r", action="store_true", help="Resume pending crawl queue from frontier database")
+    backfill_parser.add_argument("--stats", action="store_true", help="Display crawl frontier progress statistics")
+    backfill_parser.add_argument("--limit", "-l", type=int, default=100, help="Maximum articles to harvest")
+    backfill_parser.add_argument("--workers", "-w", type=int, default=5, help="Concurrent extraction threads (default: 5)")
+    backfill_parser.add_argument("--output", "-o", default="data/raw/news/football.jsonl", help="Output JSONL file (default: data/raw/news/football.jsonl)")
+    backfill_parser.add_argument("--proxy", default=None, help="Direct HTTP proxy endpoint (e.g. http://user:pass@ip:port)")
+    backfill_parser.add_argument("--proxies-file", default=None, help="Path to text file containing rotating proxy list")
+
+    # dapt-corpus command
+    dapt_parser = subparsers.add_parser("dapt-corpus", help="Prepare clean text corpus from raw articles for NusaBERT DAPT MLM")
+    dapt_parser.add_argument("--input", "-i", default="data/raw/news/football.jsonl", help="Input raw JSONL file")
+    dapt_parser.add_argument("--output", "-o", default="data/processed/nusabert_football_dapt.txt", help="Output corpus .txt path")
+    dapt_parser.add_argument("--min-words", "-w", type=int, default=50, help="Minimum words per article (default: 50)")
+    dapt_parser.add_argument("--format", "-f", choices=["line", "document"], default="line", help="Layout format: 'line' or 'document' (default: line)")
+
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -100,6 +145,132 @@ def main():
         }
         save_twitter_session(tokens)
         print("[+] Manually saved Twitter session to config/twitter_session.json.")
+
+    elif args.command == "harvest":
+        from processors.http_client import default_http_client
+        if getattr(args, "proxy", None):
+            default_http_client.set_single_proxy(args.proxy)
+            print(f"[*] Configured proxy: {args.proxy}")
+        if getattr(args, "proxies_file", None):
+            loaded_cnt = default_http_client.load_proxies_from_file(args.proxies_file)
+            print(f"[*] Loaded {loaded_cnt} rotating proxies from '{args.proxies_file}'")
+
+        from scripts.local_harvester import run_local_harvest
+        res = run_local_harvest(
+            items_per_keyword=args.limit,
+            harvest_news=not args.no_news,
+            harvest_youtube=not args.no_youtube,
+            harvest_twitter=not args.no_twitter,
+            incremental=True,
+            max_workers=args.workers
+        )
+        print(f"[+] Harvest cycle finished with status: {res.get('status')}")
+
+    elif args.command == "export":
+        from processors.exporter import run_export
+        print(f"[*] Exporting raw JSONL to analytical format '{args.format}'...")
+        res = run_export(
+            format_type=args.format,
+            raw_data_dir=args.raw_dir,
+            output_path=args.output,
+            channels=args.channels
+        )
+        if res.get("status") == "success":
+            print(f"[+] Export succeeded! Target: {res.get('target')}")
+            counts = res.get("counts", {})
+            for table, cnt in counts.items():
+                print(f"    - {table}: {cnt:,} records")
+        else:
+            print(f"[!] Export failed: {res.get('message')}")
+            sys.exit(1)
+
+    elif args.command == "backup":
+        from processors.backup import run_backup
+        print("[*] Creating compressed archive of raw datasets and analytics...")
+        res = run_backup(output_dir=args.output_dir, upload_url=args.upload_url)
+        if res.get("status") == "success":
+            print(f"[+] Backup completed successfully!")
+            print(f"    - Archive: {res.get('archive_path')}")
+            print(f"    - Size:    {res.get('size_mb')} MB ({res.get('size_bytes'):,} bytes)")
+            if res.get("cloud_uploaded"):
+                print("    - Cloud Sync: Presigned PUT upload succeeded.")
+        else:
+            print(f"[!] Backup failed: {res.get('message')}")
+            sys.exit(1)
+
+    elif args.command == "backfill":
+        from processors.http_client import default_http_client
+        if getattr(args, "proxy", None):
+            default_http_client.set_single_proxy(args.proxy)
+            print(f"[*] Configured proxy: {args.proxy}")
+        if getattr(args, "proxies_file", None):
+            loaded_cnt = default_http_client.load_proxies_from_file(args.proxies_file)
+            print(f"[*] Loaded {loaded_cnt} rotating proxies from '{args.proxies_file}'")
+
+        if args.stats:
+            from processors.crawl_frontier import CrawlFrontier
+            frontier = CrawlFrontier()
+            summary = frontier.get_frontier_summary()
+            print("\n=== Indonesian Sports Scraper - Crawl Frontier Stats ===")
+            totals = summary.get("totals", {})
+            print(f"Total Discovered: {totals.get('total', 0):,}")
+            print(f"  - Completed:    {totals.get('completed', 0):,}")
+            print(f"  - Pending:      {totals.get('pending', 0):,}")
+            print(f"  - In Progress:  {totals.get('in_progress', 0):,}")
+            print(f"  - Failed:       {totals.get('failed', 0):,}")
+            print("\nBreakdown by Portal:")
+            for p, p_data in summary.get("portals", {}).items():
+                print(f"  * {p}: {p_data.get('total', 0):,} total ({p_data.get('completed', 0):,} done, {p_data.get('pending', 0):,} pending, {p_data.get('failed', 0):,} failed)")
+            print("========================================================\n")
+        else:
+            from scripts.sitemap_backfill import run_sitemap_backfill
+            mode_desc = f"mode: {args.mode}"
+            if args.days:
+                mode_desc += f", days: {args.days}"
+            elif args.start_date and args.end_date:
+                mode_desc += f", range: {args.start_date} to {args.end_date}"
+            if args.resume:
+                mode_desc += ", resume: active"
+
+            print(f"[*] Starting historical backfill ({mode_desc}, limit: {args.limit} articles)...")
+            res = run_sitemap_backfill(
+                portal=args.portal,
+                sitemap_url=args.sitemap,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                days=args.days,
+                mode=args.mode,
+                resume=args.resume,
+                output_file=args.output,
+                max_articles=args.limit,
+                max_workers=args.workers
+            )
+            if res.get("status") == "success":
+                print(f"[+] Backfill batch completed!")
+                print(f"    - Articles Collected (This Batch): {res.get('collected', 0):,}")
+                print(f"    - New Candidates Discovered:      {res.get('new_candidates_added', 0):,}")
+                print(f"    - Destination:                     {res.get('output_file')}")
+                totals = res.get("frontier_summary", {}).get("totals", {})
+                print(f"    - Frontier Total Completed:        {totals.get('completed', 0):,}")
+                print(f"    - Frontier Pending Remaining:      {totals.get('pending', 0):,}")
+            else:
+                print(f"[!] Backfill failed: {res.get('message')}")
+                sys.exit(1)
+
+    elif args.command == "dapt-corpus":
+        from scripts.prepare_dapt_corpus import build_dapt_corpus, format_corpus_summary
+        print(f"[*] Preparing DAPT sports corpus for NusaBERT from '{args.input}'...")
+        res = build_dapt_corpus(
+            input_path=args.input,
+            output_path=args.output,
+            min_words=args.min_words,
+            doc_format=args.format
+        )
+        if res.get("status") == "success":
+            print(format_corpus_summary(res))
+        else:
+            print(f"[!] Corpus preparation failed: {res.get('message')}")
+            sys.exit(1)
 
     else:
         parser.print_help()

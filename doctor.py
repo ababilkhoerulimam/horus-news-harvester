@@ -19,6 +19,9 @@ CORE_PACKAGES = [
 OPTIONAL_PACKAGES = [
     ("pandas", "pandas"),
     ("pydantic", "pydantic"),
+    ("duckdb", "duckdb"),
+    ("pyarrow", "pyarrow"),
+    ("trafilatura", "trafilatura"),
 ]
 
 

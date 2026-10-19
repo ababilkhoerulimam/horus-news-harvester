@@ -39,18 +39,41 @@ class TwitterChannel(SportsChannel):
     def _init_session(self):
         # 1. Try saved session file
         session = load_twitter_session()
-        # 2. If not found, attempt auto-extract from Firefox
-        if not session:
-            extracted = extract_firefox_twitter_tokens()
-            if extracted:
-                save_twitter_session(extracted)
-                session = extracted
-
         if session:
             auth_token = session.get("auth_token")
             ct0 = session.get("ct0")
             if auth_token and ct0:
                 self.graphql_client = TwitterGraphQLBackend(auth_token, ct0)
+                if not self.graphql_client.validate_session():
+                    self.ensure_active_session(force_refresh=True)
+                return
+
+        # 2. Fallback to extracting from Firefox directly
+        self.ensure_active_session(force_refresh=True)
+
+    def ensure_active_session(self, force_refresh: bool = False) -> bool:
+        """
+        Validates current GraphQL session, auto-refreshing from Firefox if expired or forced.
+        Returns True if authenticated session is live, False otherwise.
+        """
+        # ponytail: Auto-recovers Twitter cookies from Firefox profile without user intervention; falls back to syndication on failure.
+        if self.graphql_client and not force_refresh:
+            if self.graphql_client.validate_session():
+                return True
+
+        extracted = extract_firefox_twitter_tokens()
+        if extracted:
+            auth_token = extracted.get("auth_token")
+            ct0 = extracted.get("ct0")
+            if auth_token and ct0:
+                client = TwitterGraphQLBackend(auth_token, ct0)
+                if client.validate_session():
+                    save_twitter_session(extracted)
+                    self.graphql_client = client
+                    return True
+
+        self.graphql_client = None
+        return False
 
     def can_handle(self, url_or_source: str) -> bool:
         url_lower = url_or_source.lower()
@@ -58,9 +81,9 @@ class TwitterChannel(SportsChannel):
 
     def check(self, config: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
         cli_present = shutil.which("twitter-cli") is not None or shutil.which("bird") is not None
-        if self.graphql_client:
+        if self.ensure_active_session():
             self.active_backend = "graphql_api"
-            return "ok", "Active: graphql_api (Firefox session authenticated)"
+            return "ok", "Active: graphql_api (Firefox session authenticated & validated)"
         self.active_backend = "syndication_api"
         status_msg = f"Active: syndication_api, twitter_cli: {'available' if cli_present else 'not found'}"
         return "ok", status_msg
@@ -208,9 +231,16 @@ class TwitterChannel(SportsChannel):
 
         for backend in candidates:
             tweets = []
-            if backend == "graphql_api" and self.graphql_client:
-                # Search user tweets via GraphQL search
-                tweets = self.graphql_client.search_tweets(f"from:{clean_user}", limit=limit)
+            if backend == "graphql_api":
+                if self.ensure_active_session():
+                    tweets = self.graphql_client.get_user_tweets(clean_user, limit=limit)
+                    if not tweets:
+                        tweets = self.graphql_client.search_tweets(f"from:{clean_user}", limit=limit)
+                    # If empty due to mid-run token expiration, attempt single force recovery
+                    if not tweets and self.ensure_active_session(force_refresh=True):
+                        tweets = self.graphql_client.get_user_tweets(clean_user, limit=limit)
+                        if not tweets:
+                            tweets = self.graphql_client.search_tweets(f"from:{clean_user}", limit=limit)
             elif backend == "syndication_api":
                 tweets = self._fetch_syndication(clean_user, limit=limit)
             elif backend == "jina_reader":
@@ -237,12 +267,15 @@ class TwitterChannel(SportsChannel):
 
         candidates = self.ordered_backends(config)
         for backend in candidates:
-            if backend == "graphql_api" and self.graphql_client:
-                items = self.graphql_client.search_tweets(query, limit=limit)
-                if items:
-                    for it in items:
-                        it["sport"] = sport
-                    return items
+            if backend == "graphql_api":
+                if self.ensure_active_session():
+                    items = self.graphql_client.search_tweets(query, limit=limit)
+                    if not items and self.ensure_active_session(force_refresh=True):
+                        items = self.graphql_client.search_tweets(query, limit=limit)
+                    if items:
+                        for it in items:
+                            it["sport"] = sport
+                        return items
 
         search_url = f"https://x.com/search?q={urllib.parse.quote(query)}"
         res = self.jina.extract(search_url)

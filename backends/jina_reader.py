@@ -17,10 +17,10 @@ def is_antibot_page(sample_bytes: bytes) -> bool:
     sample = sample_bytes[:ANTIBOT_SCAN_BYTES].decode("utf-8", errors="ignore").casefold()
     jina_warning = "warning:" in sample and "requiring captcha" in sample
     challenge_signatures = (
-        "title: just a moment...",
+        "just a moment...",
         "## performing security verification",
-        "title: attention required! | cloudflare",
-        "access denied | www.antaranews.com used cloudflare",
+        "attention required! | cloudflare",
+        "access denied",
         "checking your browser before accessing",
     )
     if jina_warning or any(sig in sample for sig in challenge_signatures):
@@ -33,7 +33,7 @@ class JinaReaderBackend:
 
     name = "jina_reader"
 
-    def __init__(self, timeout: int = 25):
+    def __init__(self, timeout: int = 8):
         self.timeout = timeout
 
     def check(self) -> Tuple[str, str]:
@@ -107,3 +107,5 @@ class JinaReaderBackend:
                 "status": "failed",
                 "error": str(e),
             }
+
+    extract = read_markdown
