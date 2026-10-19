@@ -6,10 +6,12 @@ from typing import Dict, List, Optional
 from .base import SportsChannel
 from .portal_news import PortalNewsChannel
 from .social_youtube import YouTubeChannel
+from .social_twitter import TwitterChannel
 
 _CHANNELS: Dict[str, SportsChannel] = {
     "portal_news": PortalNewsChannel(),
     "social_youtube": YouTubeChannel(),
+    "social_twitter": TwitterChannel(),
 }
 
 
@@ -23,4 +25,11 @@ def get_channel(name: str) -> Optional[SportsChannel]:
     return _CHANNELS.get(name)
 
 
-__all__ = ["SportsChannel", "PortalNewsChannel", "YouTubeChannel", "get_all_channels", "get_channel"]
+__all__ = [
+    "SportsChannel",
+    "PortalNewsChannel",
+    "YouTubeChannel",
+    "TwitterChannel",
+    "get_all_channels",
+    "get_channel",
+]

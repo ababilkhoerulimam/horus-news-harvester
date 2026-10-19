@@ -3,12 +3,17 @@ Unit tests for channels and backend fallback routing.
 """
 
 import unittest
+import tempfile
+import os
 from channels import get_all_channels, get_channel
 from channels.base import SportsChannel
 from channels.portal_news import PortalNewsChannel
 from channels.social_youtube import YouTubeChannel
+from channels.social_twitter import TwitterChannel
 from backends.jina_reader import is_antibot_page
 from processors.cleaner import clean_news_text, deduplicate_articles
+from processors.state_store import StateStore
+from scripts.scheduler import HarvestScheduler
 
 
 class TestSportsChannels(unittest.TestCase):
@@ -62,6 +67,73 @@ class TestSportsChannels(unittest.TestCase):
         ]
         deduped = deduplicate_articles(arts)
         self.assertEqual(len(deduped), 2)
+
+    def test_twitter_channel(self):
+        tw_ch = get_channel("social_twitter")
+        self.assertIsNotNone(tw_ch)
+        self.assertIsInstance(tw_ch, TwitterChannel)
+        self.assertEqual(tw_ch.backends, ["syndication_api", "jina_reader", "twitter_cli"])
+        self.assertTrue(tw_ch.can_handle("https://x.com/idextratime"))
+        self.assertTrue(tw_ch.can_handle("https://twitter.com/PSSI"))
+        self.assertTrue(tw_ch.can_handle("@CoachJustinL"))
+        self.assertEqual(tw_ch._extract_username("@idextratime"), "idextratime")
+        self.assertEqual(tw_ch._extract_username("https://x.com/PSSI/status/123"), "PSSI")
+
+    def test_state_store_sqlite(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            temp_db = tf.name
+
+        try:
+            store = StateStore(temp_db)
+            test_items = [
+                {"url": "https://example.com/art1", "title": "Article 1", "content": "News 1"},
+                {"url": "https://example.com/art2", "title": "Article 2", "content": "News 2"},
+            ]
+
+            # 1. Initially both are unseen
+            unseen = store.filter_unseen("portal_news", test_items, id_key="url")
+            self.assertEqual(len(unseen), 2)
+
+            # 2. Mark seen
+            added = store.mark_seen("portal_news", "football", test_items, id_key="url")
+            self.assertEqual(added, 2)
+
+            # 3. Subsequent filter returns empty
+            unseen2 = store.filter_unseen("portal_news", test_items, id_key="url")
+            self.assertEqual(len(unseen2), 0)
+            self.assertTrue(store.is_seen("https://example.com/art1"))
+
+            # 4. Cursor tracking
+            store.set_cursor("social_twitter", "football", "idextratime", "184000111222")
+            cursor = store.get_cursor("social_twitter", "football", "idextratime")
+            self.assertEqual(cursor, "184000111222")
+
+            # 5. Stats
+            stats = store.get_stats()
+            self.assertEqual(stats["total_items"], 2)
+            self.assertEqual(stats["by_channel"].get("portal_news"), 2)
+        finally:
+            if os.path.exists(temp_db):
+                os.remove(temp_db)
+
+    def test_scheduler_cycle_logic(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            temp_db = tf.name
+
+        try:
+            scheduler = HarvestScheduler(
+                state_db_path=temp_db,
+                news_interval_sec=1000,
+                twitter_interval_sec=1000,
+                youtube_interval_sec=1000
+            )
+            # Both due initially (since last_run is 0)
+            now = 2000.0
+            due_news = (now - scheduler.last_runs["news"]) >= scheduler.news_interval_sec
+            self.assertTrue(due_news)
+        finally:
+            if os.path.exists(temp_db):
+                os.remove(temp_db)
 
     def test_targets_and_catalog_files(self):
         import json
