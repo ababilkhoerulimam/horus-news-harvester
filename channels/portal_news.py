@@ -369,7 +369,7 @@ class PortalNewsChannel(SportsChannel):
         for backend in backends_to_try:
             if backend == "curl_impersonate" and self.curl.is_available():
                 try:
-                    proxy = config.get("proxy") if config else None
+                    proxy = (config.get("proxy") if config else None) or default_http_client.get_active_proxy()
                     status, html = self.curl.fetch(normalized_url, proxy=proxy)
                     if status == 200 and html:
                         if not is_cloudflare_challenge(status, html):
