@@ -831,7 +831,7 @@ def run_sitemap_backfill(
             nonlocal written_count
             session = curl_backend.create_async_session()
             sem = asyncio.Semaphore(concurrency)
-            proxy = proxy_endpoint or default_http_client.get_active_proxy()
+            proxy = default_http_client.get_active_proxy()
 
             with open(out_path, "a", encoding="utf-8") as f:
                 async def _fetch_single(cand: Dict[str, Any]):
