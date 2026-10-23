@@ -22,6 +22,7 @@ OPTIONAL_PACKAGES = [
     ("duckdb", "duckdb"),
     ("pyarrow", "pyarrow"),
     ("trafilatura", "trafilatura"),
+    ("curl_cffi", "curl_cffi"),
 ]
 
 

@@ -27,19 +27,30 @@ ID_MONTHS = {
 }
 
 
+# Zero-width unicode & control character patterns inspired by Scrapling AI-sanitizer
+ZERO_WIDTH_CHARS = re.compile(r"[​-‍﻿]")
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
 def clean_news_text(raw_text: str) -> str:
     """
     Cleans raw news article text by stripping advertisements,
-    editorial disclaimers, and normalizing whitespace.
+    editorial disclaimers, zero-width chars, and normalizing whitespace.
     """
     if not raw_text:
         return ""
 
     text = raw_text
+
+    # 1. Strip zero-width and control characters (invisible noise / prompt injection defense)
+    text = ZERO_WIDTH_CHARS.sub("", text)
+    text = CONTROL_CHARS.sub("", text)
+
+    # 2. Strip ad and editorial disclaimers
     for pat in AD_PATTERNS:
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
 
-    # Normalize multiple whitespace and newlines
+    # 3. Normalize multiple whitespace and newlines
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return text.strip()

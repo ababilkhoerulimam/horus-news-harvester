@@ -1,8 +1,18 @@
+# Core Ingestion & Parsing
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
-pandas>=2.2.0
-pydantic>=2.6.0
 pyyaml>=6.0.1
 tqdm>=4.66.0
 python-dateutil>=2.8.2
+
+# Data Modeling & Analytics
+pydantic>=2.6.0
+pandas>=2.2.0
+pyarrow>=14.0.0
+duckdb>=0.10.0
+
+# Anti-Bot TLS Impersonation & NLP Boilerplate Removal
+curl_cffi>=0.7.0
+trafilatura>=1.8.0
+

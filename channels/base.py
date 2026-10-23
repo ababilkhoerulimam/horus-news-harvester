@@ -31,6 +31,8 @@ class SportsChannel(ABC):
         Returns backends in priority probe order.
         Honors user override in config if specified.
         """
+        if config and "order" in config:
+            return [b for b in config["order"] if b in self.backends]
         candidates = list(self.backends)
         if config:
             override = config.get(f"{self.name}_backend")

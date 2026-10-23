@@ -51,12 +51,21 @@ class TestSportsChannels(unittest.TestCase):
 
     def test_ordered_backends(self):
         ch = PortalNewsChannel()
-        self.assertEqual(ch.backends, ["rss_parser", "jina_reader", "direct_http", "headless_browser"])
+        self.assertEqual(ch.backends, ["rss_parser", "curl_impersonate", "jina_reader", "direct_http", "headless_browser"])
 
         # Test override
         cfg = {"portal_news_backend": "jina_reader"}
         ordered = ch.ordered_backends(cfg)
         self.assertEqual(ordered[0], "jina_reader")
+
+    def test_curl_impersonate_backend(self):
+        from backends.curl_impersonate import CurlImpersonateBackend
+        curl_backend = CurlImpersonateBackend()
+        status, msg = curl_backend.check()
+        self.assertIn(status, ("ok", "off"))
+        if not curl_backend.is_available():
+            code, html = curl_backend.fetch("https://example.com")
+            self.assertEqual(code, 0)
 
     def test_normalize_portal_url(self):
         # 1. Detik without single=1
@@ -106,11 +115,25 @@ class TestSportsChannels(unittest.TestCase):
         self.assertFalse(is_antibot_page(sample_clean))
 
     def test_clean_news_text(self):
-        raw = "Persib menang telak.\n\nBaca juga: Simak jadwal lengkap Liga 1\n\nHalaman selanjutnya..."
+        raw = "Persib menang​ telak.\x00\x08\n\nBaca juga: Simak jadwal lengkap Liga 1\n\nHalaman selanjutnya..."
         cleaned = clean_news_text(raw)
         self.assertNotIn("Baca juga", cleaned)
         self.assertNotIn("Halaman selanjutnya", cleaned)
+        self.assertNotIn("​", cleaned)
+        self.assertNotIn("\x00", cleaned)
         self.assertIn("Persib menang telak.", cleaned)
+
+    def test_headless_browser_stealth_args(self):
+        backend = HeadlessBrowserBackend(browser_path="chrome.exe")
+        with unittest.mock.patch("os.path.exists", return_value=True), \
+             unittest.mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = unittest.mock.MagicMock(returncode=0, stdout="<html><body>OK</body></html>")
+            res = backend.extract("https://example.com/sport")
+            self.assertEqual(res["status"], "success")
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("--disable-blink-features=AutomationControlled", cmd)
+            self.assertIn("--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4", cmd)
+            self.assertNotIn("--disable-extensions", cmd)
 
     def test_deduplicate_articles(self):
         arts = [
@@ -805,6 +828,69 @@ class TestSportsChannels(unittest.TestCase):
         self.assertEqual(comments[0]["replies"][0]["id"], "reply_1_1")
         self.assertIn("Balasan komentar", comments[0]["replies"][0]["text"])
 
+    def test_ad_domain_filter(self):
+        from processors.ad_filter import is_ad_domain
+
+        # Known ad and sponsored tracking networks
+        self.assertTrue(is_ad_domain("https://securepubads.g.doubleclick.net/gampad/ads?id=123"))
+        self.assertTrue(is_ad_domain("http://taboola.com/feed"))
+        self.assertTrue(is_ad_domain("https://sub.mgid.com/gh/link"))
+        self.assertTrue(is_ad_domain("outbrain.com"))
+        self.assertTrue(is_ad_domain("https://criteo.com/delivery"))
+        self.assertTrue(is_ad_domain("popin.cc"))
+        self.assertTrue(is_ad_domain("https://adman.id/tracker"))
+
+        # Valid news and sports domains
+        self.assertFalse(is_ad_domain("https://sport.detik.com/sepakbola/liga-indonesia"))
+        self.assertFalse(is_ad_domain("https://bola.kompas.com/read/2026/10/24/timnas-menang"))
+        self.assertFalse(is_ad_domain("https://antaranews.com/olahraga"))
+        self.assertFalse(is_ad_domain(""))
+        self.assertFalse(is_ad_domain(None))
+
+    def test_strip_ad_links(self):
+        from processors.ad_filter import strip_ad_links
+
+        html_with_ads = (
+            '<div>'
+            '<p>Berita utama liga Indonesia.</p>'
+            '<a href="https://taboola.com/native-click">Sponsored Link 1</a>'
+            '<p>Timnas latihan taktik.</p>'
+            '<a href="https://sport.detik.com/berita-lanjutan">Baca Halaman 2</a>'
+            '<a href="https://mgid.com/promo">Sponsored Link 2</a>'
+            '</div>'
+        )
+
+        sanitized = strip_ad_links(html_with_ads)
+        self.assertNotIn("taboola.com", sanitized)
+        self.assertNotIn("Sponsored Link 1", sanitized)
+        self.assertNotIn("mgid.com", sanitized)
+        self.assertNotIn("Sponsored Link 2", sanitized)
+        self.assertIn("sport.detik.com/berita-lanjutan", sanitized)
+        self.assertIn("Baca Halaman 2", sanitized)
+        self.assertIn("Berita utama liga Indonesia", sanitized)
+
+    def test_sitemap_gzip_decompression(self):
+        import gzip
+        from scripts.sitemap_backfill import _decompress_sitemap_bytes
+
+        raw_xml = "<urlset><url><loc>https://example.com/bola/1</loc></url></urlset>"
+        xml_bytes = raw_xml.encode("utf-8")
+        gzip_bytes = gzip.compress(xml_bytes)
+
+        # 1. Decompress valid gzip payload
+        decompressed = _decompress_sitemap_bytes(gzip_bytes)
+        self.assertEqual(decompressed, raw_xml)
+
+        # 2. Decompress plain uncompressed bytes
+        decompressed_plain = _decompress_sitemap_bytes(xml_bytes)
+        self.assertEqual(decompressed_plain, raw_xml)
+
+        # 3. Graceful handling of corrupt gzip header
+        corrupt_gzip = b"\x1f\x8b\x99\x99corruptdata"
+        result_corrupt = _decompress_sitemap_bytes(corrupt_gzip)
+        self.assertIsInstance(result_corrupt, str)
+
 
 if __name__ == "__main__":
     unittest.main()
+

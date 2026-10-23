@@ -1,0 +1,809 @@
+[
+  {
+    "domain": "kompas.com",
+    "name": "Kompas.com Bola",
+    "tier": 1,
+    "base_host": "https://bola.kompas.com",
+    "sports_url": "https://bola.kompas.com",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://bola.kompas.com/sitemap.xml",
+      "https://kompas.com/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "detik.com",
+    "name": "Detikcom / Detik Sport",
+    "tier": 1,
+    "base_host": "https://sport.detik.com",
+    "sports_url": "https://sport.detik.com/sepakbola",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://sport.detik.com/sitemap.xml",
+      "https://detik.com/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/indeks?date=04%2F15%2F2026",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "antaranews.com",
+    "name": "LKBN Antara News",
+    "tier": 1,
+    "base_host": "https://www.antaranews.com",
+    "sports_url": "https://www.antaranews.com/olahraga",
+    "archetype": "generic_html",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "tvonenews.com",
+    "name": "tvOne News",
+    "tier": 1,
+    "base_host": "https://www.tvonenews.com",
+    "sports_url": "https://www.tvonenews.com/sport",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.tvonenews.com/sitemap.xml",
+      "https://tvonenews.com/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "cnnindonesia.com",
+    "name": "CNN Indonesia Olahraga",
+    "tier": 1,
+    "base_host": "https://www.cnnindonesia.com",
+    "sports_url": "https://www.cnnindonesia.com/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.cnnindonesia.com/sitemap.xml",
+      "https://cnnindonesia.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "tribunnews.com",
+    "name": "Tribunnews Superskor",
+    "tier": 1,
+    "base_host": "https://www.tribunnews.com",
+    "sports_url": "https://www.tribunnews.com/superskor",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.tribunnews.com/sitemap.xml",
+      "https://tribunnews.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "tempo.co",
+    "name": "Tempo.co Bola",
+    "tier": 1,
+    "base_host": "https://bola.tempo.co",
+    "sports_url": "https://bola.tempo.co",
+    "archetype": "heavy_waf",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": null,
+    "waf_challenge": true,
+    "status_code": 403,
+    "notes": [
+      "Cloudflare / WAF challenge detected"
+    ]
+  },
+  {
+    "domain": "beritajatim.com",
+    "name": "BeritaJatim",
+    "tier": 2,
+    "base_host": "https://beritajatim.com",
+    "sports_url": "https://beritajatim.com/olahraga",
+    "archetype": "wordpress_rest",
+    "has_wp_json": true,
+    "wp_json_endpoint": "https://beritajatim.com/wp-json/wp/v2/posts",
+    "active_sitemaps": [
+      "https://beritajatim.com/sitemap.xml",
+      "https://beritajatim.com/sitemap-news.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "suara.com",
+    "name": "Suara.com Bola",
+    "tier": 1,
+    "base_host": "https://www.suara.com",
+    "sports_url": "https://www.suara.com/bola",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.suara.com/sitemap.xml",
+      "https://www.suara.com/sitemap_news.xml",
+      "https://suara.com/sitemap.xml",
+      "https://suara.com/sitemap_news.xml"
+    ],
+    "archive_pattern": "{base}/indeks?date=04%2F15%2F2026",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "okezone.com",
+    "name": "Okezone Bola",
+    "tier": 2,
+    "base_host": "https://bola.okezone.com",
+    "sports_url": "https://bola.okezone.com",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://bola.okezone.com/sitemap.xml",
+      "https://okezone.com/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/indeks?date=04%2F15%2F2026",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "sindonews.com",
+    "name": "SINDOnews Sports",
+    "tier": 1,
+    "base_host": "https://sports.sindonews.com",
+    "sports_url": "https://sports.sindonews.com",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://sports.sindonews.com/sitemap.xml",
+      "https://sports.sindonews.com/sitemap-news.xml",
+      "https://sindonews.com/sitemap.xml",
+      "https://sindonews.com/sitemap-news.xml"
+    ],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "kumparan.com",
+    "name": "Kumparan Bola",
+    "tier": 2,
+    "base_host": "https://kumparan.com",
+    "sports_url": "https://kumparan.com/topic/bola",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://kumparan.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "jawapos.com",
+    "name": "Jawa Pos Sepak Bola",
+    "tier": 1,
+    "base_host": "https://www.jawapos.com",
+    "sports_url": "https://www.jawapos.com/sepak-bola",
+    "archetype": "monthly_sitemap",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.jawapos.com/sitemap.xml",
+      "https://www.jawapos.com/sitemap-news.xml",
+      "https://www.jawapos.com/post-sitemap.xml",
+      "https://jawapos.com/sitemap.xml",
+      "https://jawapos.com/sitemap-news.xml",
+      "https://jawapos.com/post-sitemap-2026-05.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "harianjogja.com",
+    "name": "Harian Jogja",
+    "tier": 2,
+    "base_host": "https://jogjapolitan.harianjogja.com",
+    "sports_url": "https://jogjapolitan.harianjogja.com/sport",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://harianjogja.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "inews.id",
+    "name": "iNews Sport",
+    "tier": 2,
+    "base_host": "https://www.inews.id",
+    "sports_url": "https://www.inews.id/sport",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.inews.id/sitemap.xml",
+      "https://inews.id/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "liputan6.com",
+    "name": "Liputan6 Bola",
+    "tier": 1,
+    "base_host": "https://www.liputan6.com",
+    "sports_url": "https://www.liputan6.com/bola",
+    "archetype": "monthly_sitemap",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.liputan6.com/sitemap.xml",
+      "https://www.liputan6.com/sitemap_news.xml",
+      "https://www.liputan6.com/sitemap-news.xml",
+      "https://www.liputan6.com/sitemap_index.xml",
+      "https://liputan6.com/sitemap.xml",
+      "https://liputan6.com/sitemap_news.xml",
+      "https://liputan6.com/sitemap-news.xml",
+      "https://www.liputan6.com/sitemap-2026-05.xml"
+    ],
+    "archive_pattern": "{base}/indeks?date=04%2F15%2F2026",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "viva.co.id",
+    "name": "VIVA Bola",
+    "tier": 2,
+    "base_host": "https://www.viva.co.id",
+    "sports_url": "https://www.viva.co.id/bola",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.viva.co.id/sitemap.xml",
+      "https://viva.co.id/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "republika.co.id",
+    "name": "Republika Sepak Bola & Arena",
+    "tier": 1,
+    "base_host": "https://republika.co.id",
+    "sports_url": "https://republika.co.id/kanal/sepakbola",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "merdeka.com",
+    "name": "Merdeka.com Olahraga",
+    "tier": 2,
+    "base_host": "https://www.merdeka.com",
+    "sports_url": "https://www.merdeka.com/sepakbola",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.merdeka.com/sitemap.xml",
+      "https://merdeka.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "bisnis.com",
+    "name": "Bisnis Indonesia Bola",
+    "tier": 2,
+    "base_host": "https://kabar24.bisnis.com",
+    "sports_url": "https://kabar24.bisnis.com/kategori/kabar-olahraga",
+    "archetype": "heavy_waf",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": null,
+    "waf_challenge": true,
+    "status_code": 403,
+    "notes": [
+      "Cloudflare / WAF challenge detected"
+    ]
+  },
+  {
+    "domain": "suaramerdeka.com",
+    "name": "Suara Merdeka Bola",
+    "tier": 2,
+    "base_host": "https://www.suaramerdeka.com",
+    "sports_url": "https://www.suaramerdeka.com/bola",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.suaramerdeka.com/sitemap.xml",
+      "https://www.suaramerdeka.com/sitemap-news.xml",
+      "https://suaramerdeka.com/sitemap.xml",
+      "https://suaramerdeka.com/sitemap-news.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "pikiran-rakyat.com",
+    "name": "Pikiran Rakyat Sepak Bola",
+    "tier": 2,
+    "base_host": "https://www.pikiran-rakyat.com",
+    "sports_url": "https://www.pikiran-rakyat.com/sepak-bola",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.pikiran-rakyat.com/sitemap.xml",
+      "https://www.pikiran-rakyat.com/sitemap-news.xml",
+      "https://pikiran-rakyat.com/sitemap.xml",
+      "https://pikiran-rakyat.com/sitemap-news.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "jpnn.com",
+    "name": "JPNN Olahraga",
+    "tier": 2,
+    "base_host": "https://www.jpnn.com",
+    "sports_url": "https://www.jpnn.com/kategori/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.jpnn.com/sitemap.xml",
+      "https://www.jpnn.com/sitemap_news.xml",
+      "https://jpnn.com/sitemap.xml",
+      "https://jpnn.com/sitemap_news.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "beritasatu.com",
+    "name": "BeritaSatu Sport",
+    "tier": 2,
+    "base_host": "https://www.beritasatu.com",
+    "sports_url": "https://www.beritasatu.com/sport",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.beritasatu.com/sitemap.xml",
+      "https://beritasatu.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "balipost.com",
+    "name": "Bali Post",
+    "tier": 2,
+    "base_host": "https://www.balipost.com",
+    "sports_url": "https://www.balipost.com/kategori/olahraga",
+    "archetype": "wordpress_rest",
+    "has_wp_json": true,
+    "wp_json_endpoint": "https://www.balipost.com/wp-json/wp/v2/posts",
+    "active_sitemaps": [
+      "https://www.balipost.com/sitemap.xml",
+      "https://www.balipost.com/sitemap_index.xml",
+      "https://www.balipost.com/post-sitemap.xml",
+      "https://balipost.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "mediaindonesia.com",
+    "name": "Media Indonesia Sepak Bola",
+    "tier": 2,
+    "base_host": "https://mediaindonesia.com",
+    "sports_url": "https://mediaindonesia.com/sepak-bola",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://mediaindonesia.com/sitemap.xml",
+      "https://mediaindonesia.com/sitemap-news.xml"
+    ],
+    "archive_pattern": "{base}/indeks?date=04%2F15%2F2026",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "metrotvnews.com",
+    "name": "Metro TV News Olahraga",
+    "tier": 2,
+    "base_host": "https://www.metrotvnews.com",
+    "sports_url": "https://www.metrotvnews.com/olahraga",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "idntimes.com",
+    "name": "IDN Times Sport",
+    "tier": 2,
+    "base_host": "https://www.idntimes.com",
+    "sports_url": "https://www.idntimes.com/sport",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.idntimes.com/sitemap.xml",
+      "https://idntimes.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "poskota.co.id",
+    "name": "Poskota Sport",
+    "tier": 2,
+    "base_host": "https://poskota.co.id",
+    "sports_url": "https://poskota.co.id/sport",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://poskota.co.id/sitemap.xml",
+      "https://poskota.co.id/sitemap-news.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "fajar.co.id",
+    "name": "Harian Fajar / Fajar Sport",
+    "tier": 2,
+    "base_host": "https://fajar.co.id",
+    "sports_url": "https://fajar.co.id/kategori/olahraga",
+    "archetype": "wordpress_rest",
+    "has_wp_json": true,
+    "wp_json_endpoint": "https://fajar.co.id/wp-json/wp/v2/posts",
+    "active_sitemaps": [
+      "https://fajar.co.id/sitemap.xml",
+      "https://fajar.co.id/sitemap_index.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "surabayapagi.com",
+    "name": "Surabaya Pagi",
+    "tier": 2,
+    "base_host": "https://surabayapagi.com",
+    "sports_url": "https://surabayapagi.com/kategori/olahraga",
+    "archetype": "generic_html",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "nusabali.com",
+    "name": "NusaBali",
+    "tier": 2,
+    "base_host": "https://www.nusabali.com",
+    "sports_url": "https://www.nusabali.com/kategori/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.nusabali.com/sitemap.xml",
+      "https://nusabali.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "bantennews.co.id",
+    "name": "BantenNews.co.id",
+    "tier": 2,
+    "base_host": "https://www.bantennews.co.id",
+    "sports_url": "https://www.bantennews.co.id/category/olahraga",
+    "archetype": "wordpress_rest",
+    "has_wp_json": true,
+    "wp_json_endpoint": "https://www.bantennews.co.id/wp-json/wp/v2/posts",
+    "active_sitemaps": [
+      "https://www.bantennews.co.id/sitemap_index.xml",
+      "https://www.bantennews.co.id/post-sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "tvrinews.com",
+    "name": "TVRI News",
+    "tier": 3,
+    "base_host": "https://tvrinews.com",
+    "sports_url": "https://tvrinews.com/kategori/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://tvrinews.com/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "rri.co.id",
+    "name": "Radio Republik Indonesia (RRI)",
+    "tier": 2,
+    "base_host": "https://www.rri.co.id",
+    "sports_url": "https://www.rri.co.id/olahraga",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.rri.co.id/sitemap.xml",
+      "https://rri.co.id/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/indeks/0?t=2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "tirto.id",
+    "name": "Tirto.id Olahraga",
+    "tier": 2,
+    "base_host": "https://tirto.id",
+    "sports_url": "https://tirto.id/q/olahraga",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": "{base}/indeks?date=04%2F15%2F2026",
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "rmol.id",
+    "name": "RMOL (Republik Merdeka Online)",
+    "tier": 3,
+    "base_host": "https://rmol.id",
+    "sports_url": "https://rmol.id/kategori/olahraga",
+    "archetype": "generic_html",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "rm.id",
+    "name": "Rakyat Merdeka (RM.id)",
+    "tier": 3,
+    "base_host": "https://rm.id",
+    "sports_url": "https://rm.id/kategori/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://rm.id/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 404,
+    "notes": []
+  },
+  {
+    "domain": "thejakartapost.com",
+    "name": "The Jakarta Post Sports",
+    "tier": 2,
+    "base_host": "https://www.thejakartapost.com",
+    "sports_url": "https://www.thejakartapost.com/sports",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.thejakartapost.com/sitemap_news.xml",
+      "https://www.thejakartapost.com/sitemap_index.xml",
+      "https://thejakartapost.com/sitemap_news.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "merahputih.com",
+    "name": "MerahPutih.com",
+    "tier": 2,
+    "base_host": "https://merahputih.com",
+    "sports_url": "https://merahputih.com/kategori/olahraga",
+    "archetype": "archive_query",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://merahputih.com/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "ntvnews.id",
+    "name": "Nusantara TV (NTV News)",
+    "tier": 3,
+    "base_host": "https://ntvnews.id",
+    "sports_url": "https://ntvnews.id/kategori/olahraga",
+    "archetype": "monthly_sitemap",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://ntvnews.id/sitemap.xml",
+      "https://ntvnews.id/sitemap-news.xml",
+      "https://ntvnews.id/sitemap-2026-05.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "jakartaglobe.id",
+    "name": "Jakarta Globe Sports",
+    "tier": 3,
+    "base_host": "https://jakartaglobe.id",
+    "sports_url": "https://jakartaglobe.id/sports",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://jakartaglobe.id/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 410,
+    "notes": []
+  },
+  {
+    "domain": "voi.id",
+    "name": "VOI (Voice of Indonesia)",
+    "tier": 3,
+    "base_host": "https://voi.id",
+    "sports_url": "https://voi.id/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://voi.id/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 500,
+    "notes": []
+  },
+  {
+    "domain": "goodnewsfromindonesia.id",
+    "name": "Good News From Indonesia (GNFI)",
+    "tier": 3,
+    "base_host": "https://www.goodnewsfromindonesia.id",
+    "sports_url": "https://www.goodnewsfromindonesia.id/kategori/olahraga",
+    "archetype": "sitemap_only",
+    "has_wp_json": false,
+    "wp_json_endpoint": null,
+    "active_sitemaps": [
+      "https://www.goodnewsfromindonesia.id/sitemap.xml",
+      "https://goodnewsfromindonesia.id/sitemap.xml"
+    ],
+    "archive_pattern": null,
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  },
+  {
+    "domain": "niaga.asia",
+    "name": "Niaga Asia",
+    "tier": 3,
+    "base_host": "https://www.niaga.asia",
+    "sports_url": "https://www.niaga.asia/kategori/olahraga",
+    "archetype": "wordpress_rest",
+    "has_wp_json": true,
+    "wp_json_endpoint": "https://www.niaga.asia/wp-json/wp/v2/posts",
+    "active_sitemaps": [
+      "https://www.niaga.asia/sitemap.xml",
+      "https://niaga.asia/sitemap.xml"
+    ],
+    "archive_pattern": "{base}/search/2026-04-15",
+    "waf_challenge": false,
+    "status_code": 200,
+    "notes": []
+  }
+]

@@ -10,6 +10,7 @@ from urllib.parse import urlparse, urljoin
 import re
 
 from .base import SportsChannel
+from backends.curl_impersonate import CurlImpersonateBackend
 from backends.jina_reader import JinaReaderBackend
 from backends.rss_parser import RssParserBackend, SPORT_RSS_FEEDS
 from backends.headless_browser import HeadlessBrowserBackend, is_spa_skeleton
@@ -263,13 +264,14 @@ class PortalNewsChannel(SportsChannel):
 
     name = "portal_news"
     description = "Portal Berita Olahraga Indonesia (Antara, Detik, Republika)"
-    backends = ["rss_parser", "jina_reader", "direct_http", "headless_browser"]
+    backends = ["rss_parser", "curl_impersonate", "jina_reader", "direct_http", "headless_browser"]
     tier = 0
 
     def __init__(self):
         self.jina = JinaReaderBackend()
         self.rss = RssParserBackend()
         self.headless = HeadlessBrowserBackend()
+        self.curl = CurlImpersonateBackend()
 
     def can_handle(self, url_or_source: str) -> bool:
         known_domains = (
@@ -297,12 +299,18 @@ class PortalNewsChannel(SportsChannel):
 
     def check(self, config: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
         rss_status, rss_msg = self.rss.check()
+        curl_status, curl_msg = self.curl.check()
         jina_status, jina_msg = self.jina.check()
         headless_status, headless_msg = self.headless.check()
 
-        if rss_status == "ok" or jina_status == "ok":
-            self.active_backend = "rss_parser" if rss_status == "ok" else "jina_reader"
-            return "ok", f"Available backends: RSS ({rss_status}), Jina ({jina_status}), Headless ({headless_status})"
+        if rss_status == "ok" or curl_status == "ok" or jina_status == "ok":
+            if rss_status == "ok":
+                self.active_backend = "rss_parser"
+            elif curl_status == "ok":
+                self.active_backend = "curl_impersonate"
+            else:
+                self.active_backend = "jina_reader"
+            return "ok", f"Available backends: RSS ({rss_status}), Curl ({curl_status}), Jina ({jina_status}), Headless ({headless_status})"
         self.active_backend = "direct_http"
         return "warn", "External backends degraded, using direct HTTP / headless fallback"
 
@@ -334,7 +342,24 @@ class PortalNewsChannel(SportsChannel):
         backends_to_try = self.ordered_backends(config)
 
         for backend in backends_to_try:
-            if backend == "jina_reader":
+            if backend == "curl_impersonate" and self.curl.is_available():
+                try:
+                    proxy = config.get("proxy") if config else None
+                    status, html = self.curl.fetch(normalized_url, proxy=proxy)
+                    if status == 200 and html:
+                        if not is_cloudflare_challenge(status, html):
+                            clean_content = extract_clean_article_text(html)
+                            if clean_content and len(clean_content) >= 100:
+                                return {
+                                    "url": normalized_url,
+                                    "content": clean_content,
+                                    "backend": "curl_impersonate",
+                                    "status": "success",
+                                }
+                except Exception:
+                    pass
+
+            elif backend == "jina_reader":
                 res = self.jina.read_markdown(normalized_url)
                 if res.get("status") == "success":
                     clean_content = clean_news_text(res.get("content", ""))
@@ -358,14 +383,15 @@ class PortalNewsChannel(SportsChannel):
                             break
                         visited.add(current_url)
 
-                        status, body, _ = default_http_client.fetch(current_url, timeout=10)
+                        status, body, _ = default_http_client.fetch(current_url, timeout=6.0, max_retries=1)
                         html = body.decode("utf-8", errors="replace") if body else ""
 
-                        # Cloudflare / WAF challenge detection: escalate immediately to Headless Chromium
+                        # Cloudflare / WAF challenge detection: escalate immediately to Headless Chromium if enabled
                         if is_cloudflare_challenge(status, html):
-                            res_headless = self.headless.extract(normalized_url)
-                            if res_headless.get("status") == "success":
-                                return res_headless
+                            if "headless_browser" in backends_to_try and not (config and config.get("disable_headless")):
+                                res_headless = self.headless.extract(normalized_url)
+                                if res_headless.get("status") == "success":
+                                    return res_headless
                             break
 
                         if status != 200 or not body:
@@ -388,9 +414,10 @@ class PortalNewsChannel(SportsChannel):
                         full_content = consolidate_article_pages(content_parts)
                         # Detect if page is an unrendered JS / SPA shell
                         if raw_html_first_page and is_spa_skeleton(raw_html_first_page, full_content):
-                            res_headless = self.headless.extract(normalized_url)
-                            if res_headless.get("status") == "success":
-                                return res_headless
+                            if "headless_browser" in backends_to_try and not (config and config.get("disable_headless")):
+                                res_headless = self.headless.extract(normalized_url)
+                                if res_headless.get("status") == "success":
+                                    return res_headless
                         return {
                             "url": normalized_url,
                             "content": full_content,

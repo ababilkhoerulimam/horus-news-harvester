@@ -27,9 +27,10 @@ class CrawlFrontier:
 
     @contextmanager
     def _connection(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        conn = sqlite3.connect(str(self.db_path), timeout=60.0)
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA busy_timeout = 60000;")
         conn.row_factory = sqlite3.Row
         try:
             with conn:
@@ -114,16 +115,19 @@ class CrawlFrontier:
             return [dict(r) for r in cur.fetchall()]
 
     def mark_in_progress(self, urls: List[str]) -> None:
-        """Marks batch as in_progress to avoid other workers re-picking."""
+        """Marks batch as in_progress in SQLite-safe parameter chunks."""
         if not urls:
             return
-        placeholders = ",".join(["?"] * len(urls))
+        chunk_size = 500
         with self._connection() as conn:
-            conn.execute(f"""
-                UPDATE crawl_frontier
-                SET status = 'in_progress'
-                WHERE url IN ({placeholders}) AND status = 'pending';
-            """, urls)
+            for i in range(0, len(urls), chunk_size):
+                chunk = urls[i:i + chunk_size]
+                placeholders = ",".join(["?"] * len(chunk))
+                conn.execute(f"""
+                    UPDATE crawl_frontier
+                    SET status = 'in_progress'
+                    WHERE url IN ({placeholders}) AND status = 'pending';
+                """, chunk)
 
     def mark_completed(self, url: str) -> None:
         """Marks article URL as completed with timestamp."""

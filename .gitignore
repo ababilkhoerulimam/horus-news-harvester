@@ -224,3 +224,4 @@ config/twitter_session.json
 config/proxies.txt
 data/state/
 data/raw/
+.hermes/

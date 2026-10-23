@@ -191,5 +191,64 @@ class TestDoctorTrafilatura(unittest.TestCase):
         self.assertIn("trafilatura", pkgs)
 
 
+class TestMultiPortalArchiveAndWPRest(unittest.TestCase):
+    """Verifies multi-portal archive templates and WordPress REST API crawling."""
+
+    def test_multi_portal_archive_url_generation(self):
+        # Okezone
+        u_okz = generate_portal_archive_urls("okezone", "2026-04-15", "2026-04-15")
+        self.assertEqual(len(u_okz), 1)
+        self.assertIn("bola.okezone.com/indeks/2026/04/15/", u_okz[0])
+
+        # Suara
+        u_suara = generate_portal_archive_urls("suara", "2026-04-15", "2026-04-15")
+        self.assertEqual(len(u_suara), 1)
+        self.assertIn("suara.com/indeks/terkini/bola?date=2026-04-15", u_suara[0])
+
+        # Kompas
+        u_kompas = generate_portal_archive_urls("kompas", "2026-04-15", "2026-04-15")
+        self.assertEqual(len(u_kompas), 1)
+        self.assertIn("bola.kompas.com/search/2026-04-15", u_kompas[0])
+
+    @patch("scripts.sitemap_backfill.default_http_client.fetch")
+    def test_fetch_wordpress_rest_articles(self, mock_fetch):
+        from scripts.sitemap_backfill import fetch_wordpress_rest_articles
+
+        sample_posts = [
+            {
+                "id": 101,
+                "date": "2026-04-15T12:00:00",
+                "link": "https://balipost.com/news/2026/04/15/persib-raih-kemenangan.html",
+                "title": {"rendered": "Persib Raih Kemenangan Dramatis di Laga Liga 1"},
+                "content": {"rendered": "<p>Persib Bandung sukses menaklukkan lawan...</p>"}
+            },
+            {
+                "id": 102,
+                "date": "2026-04-15T14:00:00",
+                "link": "https://balipost.com/news/2026/04/15/pertandingan-bola-voli.html",
+                "title": {"rendered": "Pertandingan Bola Voli Antar Desa Berlangsung Meriah"},
+                "content": {"rendered": "<p>Turnamen bola voli ini diikuti puluhan regu...</p>"}
+            }
+        ]
+        # Return posts on page 1, then empty on page 2
+        mock_fetch.side_effect = [
+            (200, json.dumps(sample_posts).encode("utf-8"), {}),
+            (200, b"[]", {})
+        ]
+
+        items = fetch_wordpress_rest_articles(
+            portal="balipost",
+            base_api_url="https://www.balipost.com/wp-json/wp/v2/posts",
+            start_date="2026-04-01",
+            end_date="2026-04-30",
+            max_articles=50
+        )
+
+        # Should only retain football post (101), volleyball post (102) excluded
+        self.assertEqual(len(items), 1)
+        self.assertIn("persib", items[0]["url"])
+        self.assertIn("Persib Raih Kemenangan", items[0]["title"])
+
+
 if __name__ == "__main__":
     unittest.main()

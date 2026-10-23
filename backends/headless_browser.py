@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
@@ -92,82 +93,83 @@ class HeadlessBrowserBackend:
                 "error": "No Chromium executable available",
             }
 
-        cmd = [
-            self.browser_path,
-            "--headless=new",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-extensions",
-            "--disable-background-networking",
-            "--disable-sync",
-            "--disable-translate",
-            "--mute-audio",
-            f"--virtual-time-budget={render_budget_ms}",
-            "--dump-dom",
-            clean_url,
-        ]
+        with tempfile.TemporaryDirectory(prefix="crawler_chrome_") as tmp_user_data:
+            # ponytail: Anti-bot stealth args inspired by Scrapling.
+            # Omit --disable-extensions (flagged by Cloudflare WAF as automation signal).
+            # Add AutomationControlled suppression to unset navigator.webdriver.
+            cmd = [
+                self.browser_path,
+                "--headless=new",
+                f"--user-data-dir={tmp_user_data}",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--disable-translate",
+                "--mute-audio",
+                "--no-first-run",
+                "--password-store=basic",
+                "--disable-search-engine-choice-screen",
+                "--disable-blink-features=AutomationControlled",
+                "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+                f"--virtual-time-budget={render_budget_ms}",
+                "--dump-dom",
+                clean_url,
+            ]
 
-        try:
-            # ponytail: 15s execution timeout with auto-kill to prevent runaway browser zombie processes.
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout,
-            )
+            try:
+                # ponytail: 15s execution timeout with auto-kill to prevent runaway browser zombie processes.
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=self.timeout,
+                )
 
-            if proc.returncode != 0:
+                if proc.returncode != 0:
+                    return {
+                        "url": clean_url,
+                        "content": "",
+                        "status": "failed",
+                        "backend": self.name,
+                        "error": f"Browser process returned exit code {proc.returncode}",
+                    }
+
+                html = proc.stdout
+                html_no_scripts = re.sub(
+                    r"<(?:script|style|noscript|header|footer|nav|aside)[^>]*>.*?</(?:script|style|noscript|header|footer|nav|aside)>",
+                    " ",
+                    html,
+                    flags=re.DOTALL | re.IGNORECASE,
+                )
+                raw_text = re.sub(r"<[^>]+>", " ", html_no_scripts)
+                clean_text = clean_news_text(raw_text)
+
+                return {
+                    "url": clean_url,
+                    "content": clean_text,
+                    "status": "success",
+                    "backend": self.name,
+                    "rendered_html_length": len(html),
+                }
+
+            except subprocess.TimeoutExpired:
                 return {
                     "url": clean_url,
                     "content": "",
                     "status": "failed",
                     "backend": self.name,
-                    "error": f"Browser process returned exit code {proc.returncode}",
+                    "error": f"Rendering timed out after {self.timeout}s",
                 }
-
-            html = proc.stdout
-            html_no_scripts = re.sub(
-                r"<(?:script|style|noscript|header|footer|nav|aside)[^>]*>.*?</(?:script|style|noscript|header|footer|nav|aside)>",
-                " ",
-                html,
-                flags=re.DOTALL | re.IGNORECASE,
-            )
-            raw_text = re.sub(r"<[^>]+>", " ", html_no_scripts)
-            clean_content = clean_news_text(raw_text)
-
-            if not clean_content:
+            except Exception as e:
                 return {
                     "url": clean_url,
                     "content": "",
                     "status": "failed",
                     "backend": self.name,
-                    "error": "Empty rendered DOM text",
+                    "error": str(e),
                 }
-
-            return {
-                "url": clean_url,
-                "content": clean_content,
-                "status": "success",
-                "backend": self.name,
-            }
-
-        except subprocess.TimeoutExpired:
-            return {
-                "url": clean_url,
-                "content": "",
-                "status": "failed",
-                "backend": self.name,
-                "error": f"Rendering timed out after {self.timeout}s",
-            }
-        except Exception as e:
-            return {
-                "url": clean_url,
-                "content": "",
-                "status": "failed",
-                "backend": self.name,
-                "error": str(e),
-            }

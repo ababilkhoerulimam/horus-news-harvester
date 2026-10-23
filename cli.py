@@ -66,7 +66,16 @@ def main():
 
     # backfill command
     backfill_parser = subparsers.add_parser("backfill", help="Harvest historical football articles via XML sitemaps and archives")
-    backfill_parser.add_argument("--portal", "-p", choices=["detik", "antara", "kompas", "bolanet", "sindonews", "skor"], default=None, help="Target portal (default: all primary football portals)")
+    backfill_parser.add_argument(
+        "--portal", "-p",
+        choices=[
+            "detik", "kompas", "sindonews", "okezone", "suara", "republika", "antara",
+            "bolasport", "bolanet", "tribun", "jawapos", "skor",
+            "beritajatim", "balipost", "fajar", "bantennews", "niaga_asia", "all"
+        ],
+        default=None,
+        help="Target portal (default: all configured portals)"
+    )
     backfill_parser.add_argument("--sitemap", "-s", default=None, help="Direct XML sitemap URL to parse")
     backfill_parser.add_argument("--days", "-d", type=int, default=None, help="Past days to crawl (e.g. 365 for 1 year, 7 for weekly)")
     backfill_parser.add_argument("--start-date", default=None, help="Archive start date (YYYY-MM-DD)")
@@ -154,6 +163,12 @@ def main():
         if getattr(args, "proxies_file", None):
             loaded_cnt = default_http_client.load_proxies_from_file(args.proxies_file)
             print(f"[*] Loaded {loaded_cnt} rotating proxies from '{args.proxies_file}'")
+        else:
+            from processors.http_client import DEFAULT_PROXIES_FILE
+            if DEFAULT_PROXIES_FILE.exists():
+                loaded_cnt = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
+                if loaded_cnt:
+                    print(f"[*] Auto-loaded {loaded_cnt} rotating proxies from '{DEFAULT_PROXIES_FILE}'")
 
         from scripts.local_harvester import run_local_harvest
         res = run_local_harvest(
@@ -206,6 +221,12 @@ def main():
         if getattr(args, "proxies_file", None):
             loaded_cnt = default_http_client.load_proxies_from_file(args.proxies_file)
             print(f"[*] Loaded {loaded_cnt} rotating proxies from '{args.proxies_file}'")
+        else:
+            from processors.http_client import DEFAULT_PROXIES_FILE
+            if DEFAULT_PROXIES_FILE.exists():
+                loaded_cnt = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
+                if loaded_cnt:
+                    print(f"[*] Auto-loaded {loaded_cnt} rotating proxies from '{DEFAULT_PROXIES_FILE}'")
 
         if args.stats:
             from processors.crawl_frontier import CrawlFrontier

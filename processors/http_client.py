@@ -23,6 +23,20 @@ DEFAULT_USER_AGENTS = [
 DEFAULT_PROXIES_FILE = Path(__file__).resolve().parent.parent / "config" / "proxies.txt"
 
 
+def normalize_proxy_url(raw: str) -> str:
+    """Normalizes raw proxy string into standard URL format (e.g. IP:PORT:USER:PASS -> http://USER:PASS@IP:PORT)."""
+    clean = raw.strip()
+    if not clean:
+        return ""
+    parts = clean.split(":")
+    if len(parts) == 4 and not clean.startswith(("http://", "https://", "socks5://")):
+        ip, port, user, pwd = parts
+        return f"http://{user}:{pwd}@{ip}:{port}"
+    if not clean.startswith(("http://", "https://", "socks5://")):
+        return f"http://{clean}"
+    return clean
+
+
 class ResilientHttpClient:
     """
     HTTP client providing automatic User-Agent rotation, optional rotating proxy pool,
@@ -36,19 +50,20 @@ class ResilientHttpClient:
         max_jitter: float = 2.0,
         enable_jitter: bool = True,
     ):
-        self.proxies_file = Path(proxies_file) if proxies_file else DEFAULT_PROXIES_FILE
+        self.proxies_file = Path(proxies_file) if proxies_file else None
         self.min_jitter = min_jitter
         self.max_jitter = max_jitter
         self.enable_jitter = enable_jitter
         self._proxies: List[str] = []
         self._failed_proxies: set = set()
         self._single_proxy: Optional[str] = None
-        self.reload_proxies()
+        if self.proxies_file:
+            self.reload_proxies()
 
     def set_single_proxy(self, proxy_url: Optional[str]) -> None:
         """Forces all requests to route through this specific proxy endpoint."""
         if proxy_url and proxy_url.strip():
-            self._single_proxy = proxy_url.strip()
+            self._single_proxy = normalize_proxy_url(proxy_url)
         else:
             self._single_proxy = None
 
@@ -56,7 +71,7 @@ class ResilientHttpClient:
         """Adds a list of proxies to the rotating pool."""
         added = 0
         for p in proxy_list:
-            clean = p.strip()
+            clean = normalize_proxy_url(p)
             if clean and clean not in self._proxies:
                 self._proxies.append(clean)
                 added += 1
@@ -73,8 +88,9 @@ class ResilientHttpClient:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#"):
-                        if line not in self._proxies:
-                            self._proxies.append(line)
+                        clean = normalize_proxy_url(line)
+                        if clean and clean not in self._proxies:
+                            self._proxies.append(clean)
                             loaded += 1
         except Exception:
             pass
@@ -89,7 +105,9 @@ class ResilientHttpClient:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
-                            self._proxies.append(line)
+                            clean = normalize_proxy_url(line)
+                            if clean and clean not in self._proxies:
+                                self._proxies.append(clean)
             except Exception:
                 pass
         return len(self._proxies)
@@ -125,9 +143,9 @@ class ResilientHttpClient:
         url: str,
         data: Optional[bytes] = None,
         headers: Optional[Dict[str, str]] = None,
-        timeout: float = 12.0,
+        timeout: float = 6.0,
         use_jitter: Optional[bool] = None,
-        max_retries: int = 2,
+        max_retries: int = 1,
     ) -> Tuple[int, bytes, Dict[str, str]]:
         """
         Executes HTTP request with proxy rotation, UA randomization, jitter,

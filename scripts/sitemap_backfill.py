@@ -3,8 +3,10 @@ Historical Sitemap & Date Archive Crawler for Indonesian Sports Portals.
 Enables large-scale backfilling (10k - 100k articles) for NLP Domain-Adaptive
 Pre-Training (DAPT) and Named Entity Recognition (NER).
 """
+from __future__ import annotations
 
 import json
+import gzip
 import logging
 import os
 import re
@@ -23,6 +25,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from channels.portal_news import PortalNewsChannel, normalize_portal_url
+from processors.ad_filter import is_ad_domain
 from processors.cleaner import clean_news_text, normalize_timestamp
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB
 from processors.http_client import default_http_client
@@ -30,54 +33,203 @@ from scripts.local_harvester import _load_existing_ids
 
 logger = logging.getLogger("sitemap_backfill")
 
-# Default football-specific path and title keyword filters
+# Default football-specific path and title keyword filters (Exhaustive Indonesian & International taxonomy)
 DEFAULT_FOOTBALL_KEYWORDS = [
-    "sepakbola",
-    "sepak-bola",
-    "bola",
-    "liga-1",
-    "timnas",
-    "liga-indonesia",
-    "persib",
-    "persija",
-    "arema",
-    "persebaya",
-    "pssi",
-    "shopee-liga-1",
-    "bri-liga-1",
-    "piala-presiden",
-    "piala-asia",
-    "world-cup",
-    "kualifikasi-piala-dunia",
+    # 1. Core General Football Terms
+    "sepakbola", "sepak-bola", "sepak bola", "football", "soccer", "futsal", "bola",
+
+    # 2. Indonesian Leagues & Tournaments
+    "liga 1", "liga 2", "liga 3", "liga-1", "liga-2", "liga-3",
+    "liga indonesia", "liga-indonesia", "bri liga 1", "bri-liga-1", "shopee-liga-1",
+    "pegadaian liga 2", "pegadaian-liga-2", "piala presiden", "piala-presiden",
+    "piala indonesia", "piala-indonesia", "epa liga 1", "elite pro academy", "soeratin", "piala soeratin",
+
+    # 3. Indonesian Football Governance
+    "pssi", "pt lib", "pt-lib", "operator liga", "komdis pssi", "exco pssi",
+
+    # 4. Indonesian National Team (Timnas)
+    "timnas", "timnas indonesia", "timnas-indonesia", "skuad garuda", "garuda muda",
+    "garuda pertiwi", "timnas senior", "timnas u23", "timnas u20", "timnas u17",
+    "timnas u-23", "timnas u-20", "timnas u-17", "timnas putri",
+
+    # 5. Indonesian Coaches, Managers, Pundits
+    "shin tae-yong", "shin tae yong", "sty", "erick thohir", "erick-thohir",
+    "indra sjafri", "nova arianto", "coach justin", "bung ropan", "bung binder",
+    "bojan hodak", "carlos pena", "gilbert agius", "pieter huistra", "paul munster",
+    "stefano cugurra", "teco", "bernardo tavares",
+
+    # 6. Indonesian National Team & Star League Players
+    "jay idzes", "thom haye", "maarten paes", "marselino ferdinan", "marselino",
+    "rafael struick", "ragnar oratmangoen", "nathan tjoe-a-on", "nathan", "calvin verdonk", "verdonk",
+    "rizky ridho", "asnawi mangkualam", "asnawi", "pratama arhan", "arhan", "justin hubner",
+    "sandy walsh", "jordi amat", "ivar jenner", "shayne pattynama", "eliano reijnders",
+    "mees hilgers", "ernando ari", "nadeo argawinata", "dimas drajad", "hokky caraka",
+    "egy maulana vikri", "egy maulana", "witan sulaeman", "ricky kambuaya", "marc klok",
+    "yakob sayuri", "yance sayuri", "wahyu prasetyo", "malik risaldi", "ramadhan sananta",
+    "beckham putra", "david da silva", "ciro alves", "gustavo almeida", "alex martins",
+
+    # 7. Indonesian Liga 1 Clubs & Fan Monikers
+    "persib", "maung bandung", "pangeran biru",
+    "persija", "macan kemayoran", "the jakmania", "jakmania",
+    "persebaya", "bajul ijo", "bonek",
+    "arema", "singo edan", "aremania",
+    "bali united", "bali-united", "serdadu tridatu",
+    "psm makassar", "psm-makassar", "jukueja",
+    "borneo fc", "borneo-fc", "pesut etam",
+    "dewa united", "dewa-united", "banten warrior",
+    "madura united", "madura-united", "laskar sape kerrab",
+    "psis semarang", "psis-semarang", "laskar mahesa jenar", "panser biru", "snex",
+    "persis solo", "persis-solo", "laskar sambernyawa", "pasoepati",
+    "persik kediri", "persik-kediri", "macan putih",
+    "persita tangerang", "persita", "pendekar cisadane",
+    "barito putera", "barito-putera", "laskar antasari",
+    "pss sleman", "pss-sleman", "super elang jawa", "super elja", "bcs x pss", "slemania",
+    "malut united", "malut-united", "laskar kie raha",
+    "semen padang", "semen-padang", "kabau sirah",
+    "psbs biak", "psbs-biak", "badai pasifik",
+
+    # 8. Indonesian Liga 2 Heritage Clubs
+    "sriwijaya fc", "sriwijaya-fc", "laskar wong kito",
+    "psms medan", "psms-medan", "ayam kinantan",
+    "persipura jayapura", "persipura", "mutiara hitam",
+    "persela lamongan", "persela", "laskar joko tingkir",
+    "deltras", "gresik united", "persijap jepara", "persijap", "persiraja",
+
+    # 9. Asian & ASEAN Regional Tournaments
+    "piala asia", "asian cup", "piala-asia", "afc", "kualifikasi piala asia",
+    "piala aff", "piala-aff", "aff cup", "asean cup", "asean championship",
+    "afc champions league", "acl two", "piala afc", "sea games",
+
+    # 10. World Cup & Global Tournaments
+    "piala dunia", "world cup", "world-cup", "piala-dunia", "fifa",
+    "kualifikasi piala dunia", "kualifikasi-piala-dunia", "fifa matchday", "fifa match day",
+
+    # 11. Foreign Leagues Heavily Covered in Indo Desks
+    "champions league", "champions-league", "liga champions", "liga-champions", "uefa",
+    "premier league", "premier-league", "liga inggris", "liga-inggris",
+    "la liga", "la-liga", "liga spanyol", "liga-spanyol",
+    "serie a", "serie-a", "liga italia", "liga-italia",
+    "bundesliga", "ligue 1", "ligue-1", "eredivisie", "saudi pro league",
+
+    # 12. Top Global Clubs Covered by Indo Portals
+    "real madrid", "barcelona", "manchester united", "manchester city",
+    "liverpool", "arsenal", "chelsea", "tottenham", "juventus",
+    "ac milan", "inter milan", "bayern munchen", "bayern munich", "psg",
+    "al nassr", "al hilal", "inter miami",
 ]
+
+
+def _matches_keywords(url_lower: str, title_lower: str, keywords: List[str]) -> bool:
+    """
+    Checks if an article URL or headline matches any football keyword.
+    Tolerates differences between hyphens, underscores, and spaces.
+    """
+    if not keywords:
+        return True
+    url_spaced = url_lower.replace("-", " ").replace("_", " ").replace("/", " ")
+    for kw in keywords:
+        kw_lower = kw.lower()
+        if kw_lower in url_lower:
+            return True
+        if title_lower and kw_lower in title_lower:
+            return True
+        kw_spaced = kw_lower.replace("-", " ").replace("_", " ")
+        if kw_spaced in url_spaced:
+            return True
+        if title_lower and kw_spaced in title_lower:
+            return True
+        kw_hyphen = kw_lower.replace(" ", "-")
+        if kw_hyphen in url_lower:
+            return True
+    return False
 
 # Known XML Sitemaps of Indonesian news portals
 KNOWN_PORTAL_SITEMAPS: Dict[str, List[str]] = {
     "detik": [
         "https://sport.detik.com/sitemap_sepakbola.xml",
-        "https://www.detik.com/sitemap_news.xml",
-        "https://www.detik.com/sitemap.xml",
-    ],
-    "antara": [
-        "https://www.antaranews.com/sitemap_news.xml",
-        "https://www.antaranews.com/sitemap.xml",
+        "https://sport.detik.com/sitemap_news.xml",
+        "https://sport.detik.com/sitemap.xml",
     ],
     "kompas": [
         "https://bola.kompas.com/sitemap.xml",
-        "https://www.kompas.com/sitemap.xml",
+        "https://www.kompas.com/sitemap-news-sport.xml",
+        "https://www.kompas.com/sitemap-archive-sport.xml",
     ],
-    "bolanet": [
-        "https://www.bola.net/sitemap.xml",
-        "https://www.bola.net/sitemap_news.xml",
+    "bolasport": [
+        "https://www.bolasport.com/sitemap-news.xml",
+        "https://www.bolasport.com/sitemap-web.xml",
     ],
     "sindonews": [
         "https://sports.sindonews.com/sitemap.xml",
-        "https://www.sindonews.com/sitemap_news.xml",
+        "https://sports.sindonews.com/sitemap-news.xml",
+    ],
+    "suara": [
+        "https://www.suara.com/sitemap.xml",
+        "https://www.suara.com/news/sitemap-news.xml",
+        "https://www.suara.com/news/sitemap-web.xml",
+    ],
+    "tribun": [
+        "https://www.tribunnews.com/sitemap.xml",
+        "https://www.tribunnews.com/nasional/sitemap-news.xml",
+    ],
+    "jawapos": [
+        "https://www.jawapos.com/sitemap.xml",
+        "https://www.jawapos.com/post-recent.xml",
     ],
     "skor": [
         "https://skor.id/sitemap.xml",
     ],
 }
+
+# Archive query endpoint configurations for 1-year historical crawling
+ARCHIVE_PORTAL_CONFIGS: Dict[str, Dict[str, str]] = {
+    "detik": {
+        "url_tpl": "https://sport.detik.com/sepakbola/indeks?date={m}%2F{d}%2F{y}",
+        "page_tpl": "{base}&page={page}",
+    },
+    "kompas": {
+        "url_tpl": "https://bola.kompas.com/search/{iso}",
+        "page_tpl": "{base}/{page}",
+    },
+    "okezone": {
+        "url_tpl": "https://bola.okezone.com/indeks/{y}/{m}/{d}/",
+        "page_tpl": "{base}/{offset}/",
+    },
+    "suara": {
+        "url_tpl": "https://www.suara.com/indeks/terkini/bola?date={iso}",
+        "page_tpl": "{base}&page={page}",
+    },
+}
+
+# WordPress REST API portals with native date range query support
+WORDPRESS_REST_PORTALS: Dict[str, str] = {
+    "beritajatim": "https://beritajatim.com/wp-json/wp/v2/posts",
+    "balipost": "https://www.balipost.com/wp-json/wp/v2/posts",
+    "fajar": "https://fajar.co.id/wp-json/wp/v2/posts",
+    "bantennews": "https://www.bantennews.co.id/wp-json/wp/v2/posts",
+    "niaga_asia": "https://www.niaga.asia/wp-json/wp/v2/posts",
+}
+
+NON_FOOTBALL_SPORTS = [
+    "bola voli", "voli", "volleyball",
+    "bola basket", "basket", "basketball",
+    "bulutangkis", "badminton",
+    "motogp", "f1", "formula 1",
+    "tenis", "tennis",
+]
+
+
+def _decompress_sitemap_bytes(data: bytes) -> str:
+    """
+    Auto-detects and decompresses gzip-encoded sitemap payloads (magic header 1f 8b).
+    Inspired by Scrapling sitemap decompression logic.
+    """
+    if len(data) >= 2 and data[:2] == b"\x1f\x8b":
+        try:
+            return gzip.decompress(data).decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.warning(f"Gzip decompression failed: {e}")
+    return data.decode("utf-8", errors="replace")
 
 
 def parse_sitemap_xml(
@@ -140,16 +292,9 @@ def parse_sitemap_xml(
         url_lower = raw_url.lower()
         title_lower = title.lower()
 
-        is_match = False
-        if not keywords:
-            is_match = True
-        else:
-            for kw in keywords:
-                if kw in url_lower or (title_lower and kw in title_lower):
-                    is_match = True
-                    break
+        is_match = _matches_keywords(url_lower, title_lower, keywords)
 
-        if is_match:
+        if is_match and not is_ad_domain(raw_url):
             articles.append({
                 "url": normalize_portal_url(raw_url),
                 "published_date": normalize_timestamp(lastmod),
@@ -187,7 +332,8 @@ def _regex_fallback_sitemap(xml_content: str, keywords: List[str]) -> Tuple_Resu
         title = title_m.group(1).strip() if title_m else ""
 
         url_lower = raw_url.lower()
-        if any(kw in url_lower for kw in keywords):
+        title_lower = title.lower()
+        if _matches_keywords(url_lower, title_lower, keywords):
             articles.append({
                 "url": normalize_portal_url(raw_url),
                 "published_date": normalize_timestamp(lastmod),
@@ -214,7 +360,7 @@ def fetch_sitemap_urls(
 
     keywords = filter_keywords or DEFAULT_FOOTBALL_KEYWORDS
 
-    while to_visit and len(collected_articles) < max_urls:
+    while to_visit and (max_urls <= 0 or len(collected_articles) < max_urls):
         current_url, depth = to_visit.pop(0)
         if current_url in visited_sitemaps:
             continue
@@ -224,7 +370,7 @@ def fetch_sitemap_urls(
             status, body_bytes, _ = default_http_client.fetch(current_url, timeout=15)
             if status != 200 or not body_bytes:
                 continue
-            xml_text = body_bytes.decode("utf-8", errors="replace")
+            xml_text = _decompress_sitemap_bytes(body_bytes)
         except Exception as e:
             logger.warning(f"Failed to fetch sitemap {current_url}: {e}")
             continue
@@ -236,19 +382,19 @@ def fetch_sitemap_urls(
             if u not in seen_urls:
                 seen_urls.add(u)
                 collected_articles.append(art)
-                if len(collected_articles) >= max_urls:
+                if max_urls > 0 and len(collected_articles) >= max_urls:
                     break
 
         # Queue child sitemaps if depth allows
         if depth < max_depth:
             for child in child_sitemaps:
                 child_lower = child.lower()
-                # Prioritize sports or news child sitemaps
-                if any(k in child_lower for k in ["sport", "bola", "news", "sepakbola", "artikel"]):
+                if any(x in child_lower for x in ["image", "video", "foto", "tag-", "category-", "author-"]):
+                    continue
+                if any(k in child_lower for k in ["sport", "bola", "sepakbola", "news", "post", "artikel", "berita"]):
                     if child not in visited_sitemaps:
                         to_visit.append((child, depth + 1))
-                elif not any(k in child_lower for k in ["video", "foto", "lifestyle", "otomotif", "finance"]):
-                    # General index sitemap
+                elif not any(x in child_lower for x in ["lifestyle", "otomotif", "horoskop", "zodiak"]):
                     if child not in visited_sitemaps:
                         to_visit.append((child, depth + 1))
 
@@ -276,6 +422,7 @@ def generate_portal_archive_urls(
 
     curr = dt_start
     p_lower = portal.lower().strip()
+    cfg = ARCHIVE_PORTAL_CONFIGS.get(p_lower)
 
     while curr <= dt_end:
         y = curr.strftime("%Y")
@@ -283,20 +430,17 @@ def generate_portal_archive_urls(
         d = curr.strftime("%d")
         iso = curr.strftime("%Y-%m-%d")
 
-        if "detik" in p_lower:
-            # Detik Sport Sepakbola index: https://sport.detik.com/sepakbola/indeks?date=MM/DD/YYYY
+        if cfg and "url_tpl" in cfg:
+            urls.append(cfg["url_tpl"].format(base=cfg.get("base", ""), y=y, m=m, d=d, iso=iso))
+        elif "detik" in p_lower:
             urls.append(f"https://sport.detik.com/sepakbola/indeks?date={m}%2F{d}%2F{y}")
         elif "antara" in p_lower:
-            # Antara Sepak Bola archive: https://www.antaranews.com/sepak-bola/arsip/{YYYY-MM-DD}
             urls.append(f"https://www.antaranews.com/sepak-bola/arsip/{iso}")
         elif "sindo" in p_lower:
-            # Sindonews Sports index: https://sports.sindonews.com/indeks/0?t={YYYY-MM-DD}
             urls.append(f"https://sports.sindonews.com/indeks/0?t={iso}")
         elif "kompas" in p_lower:
-            # Kompas Bola index: https://bola.kompas.com/search/{YYYY-MM-DD}
             urls.append(f"https://bola.kompas.com/search/{iso}")
         else:
-            # Generic fallback
             urls.append(f"https://sport.detik.com/sepakbola/indeks?date={m}%2F{d}%2F{y}")
 
         curr += timedelta(days=1)
@@ -349,15 +493,27 @@ def parse_archive_index_html(
             # Matches: sports.sindonews.com/read/...
             if "sports.sindonews.com/read/" in href_clean:
                 is_match = True
+        elif "okezone" in p_lower:
+            # Matches: bola.okezone.com/read/...
+            if "bola.okezone.com/read/" in href_clean:
+                is_match = True
+        elif "suara" in p_lower:
+            # Matches: suara.com/bola/YYYY/MM/DD/...
+            if "suara.com/bola/" in href_clean and re.search(r"/\d{4}/\d{2}/\d{2}/\d+/", href_clean):
+                is_match = True
+        elif "republika" in p_lower:
+            # Matches: sport.republika.co.id/berita/...
+            if ("sport.republika.co.id/berita/" in href_clean or "republika.co.id/berita/" in href_clean) and not any(x in href_clean for x in ["/foto/", "/video/"]):
+                is_match = True
         elif "bolanet" in p_lower:
             # Matches: bola.net/...
             if "bola.net/" in href_clean and not href_clean.endswith(".net/"):
                 is_match = True
         else:
-            # Generic fallback: check if URL contains sports keywords and has article structure
+            # Generic fallback: check if URL or anchor contains football keywords and has article structure
             href_lower = href_clean.lower()
-            if any(kw in href_lower for kw in DEFAULT_FOOTBALL_KEYWORDS):
-                if any(x in href_lower for x in ["/read/", "/d-", "/berita/", "/artikel/"]):
+            if _matches_keywords(href_lower, anchor_clean.lower(), DEFAULT_FOOTBALL_KEYWORDS):
+                if any(x in href_lower for x in ["/read/", "/d-", "/berita/", "/artikel/", "/post/", "/news/"]):
                     is_match = True
 
         if is_match:
@@ -380,6 +536,11 @@ def generate_archive_page_url(base_archive_url: str, portal: str, page_num: int)
         return base_archive_url
 
     p_lower = portal.lower().strip()
+    cfg = ARCHIVE_PORTAL_CONFIGS.get(p_lower)
+    if cfg and "page_tpl" in cfg:
+        offset = (page_num - 1) * 20
+        return cfg["page_tpl"].format(base=base_archive_url.rstrip('/'), page=page_num, offset=offset)
+
     if "detik" in p_lower:
         sep = "&" if "?" in base_archive_url else "?"
         return f"{base_archive_url}{sep}page={page_num}"
@@ -414,7 +575,7 @@ def fetch_archive_articles(
     logger.info(f"Generated {len(archive_urls)} archive date index pages for '{portal}' ({start_date} to {end_date})")
 
     for arch_url in archive_urls:
-        if len(collected) >= max_articles:
+        if max_articles > 0 and len(collected) >= max_articles:
             break
 
         # Extract archive date from URL if available
@@ -423,7 +584,7 @@ def fetch_archive_articles(
 
         # Probe pages for this date (page 1, 2, ... up to max_pages_per_date)
         for page_num in range(1, max_pages_per_date + 1):
-            if len(collected) >= max_articles:
+            if max_articles > 0 and len(collected) >= max_articles:
                 break
 
             target_page_url = generate_archive_page_url(arch_url, portal=portal, page_num=page_num)
@@ -449,12 +610,83 @@ def fetch_archive_articles(
                     seen.add(u)
                     collected.append(item)
                     new_on_page += 1
-                    if len(collected) >= max_articles:
+                    if max_articles > 0 and len(collected) >= max_articles:
                         break
 
-            # Early exit: if no new unique articles added, or page had very few items, stop pagination
-            if new_on_page == 0 or len(items) < 10:
+            # Early exit: if no new unique articles added on this page, stop pagination
+            if new_on_page == 0:
                 break
+
+    return collected
+
+
+def fetch_wordpress_rest_articles(
+    portal: str,
+    base_api_url: str,
+    start_date: str,
+    end_date: str,
+    max_articles: int = 1000,
+    filter_keywords: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
+    """
+    Crawls historical articles from WordPress REST API endpoint between start_date and end_date.
+    Filters candidate articles strictly by football keywords, excluding non-football sports.
+    """
+    keywords = [k.lower() for k in (filter_keywords or DEFAULT_FOOTBALL_KEYWORDS)]
+    collected: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+    page = 1
+    max_pages = 50
+
+    logger.info(f"Querying WordPress REST API for '{portal}' ({start_date} to {end_date})")
+
+    while (max_articles <= 0 or len(collected) < max_articles) and page <= max_pages:
+        endpoint = (
+            f"{base_api_url}?after={start_date}T00:00:00&before={end_date}T23:59:59"
+            f"&per_page=100&page={page}"
+        )
+        try:
+            status, body_bytes, _ = default_http_client.fetch(endpoint, timeout=12.0)
+            if status != 200 or not body_bytes:
+                break
+            posts = json.loads(body_bytes.decode("utf-8", errors="replace"))
+            if not isinstance(posts, list) or not posts:
+                break
+        except Exception as e:
+            logger.debug(f"WP-REST fetch error for {portal} page {page}: {e}")
+            break
+
+        for post in posts:
+            link = post.get("link", "").strip()
+            if not link or link in seen:
+                continue
+
+            title = post.get("title", {}).get("rendered", "")
+            title_clean = re.sub(r"<[^>]+>", "", title).strip()
+            content_sample = post.get("content", {}).get("rendered", "")[:500]
+
+            text_to_check = f"{link} {title_clean} {content_sample}".lower()
+
+            # Exclude non-football sports explicitly
+            if any(nf in text_to_check for nf in NON_FOOTBALL_SPORTS) and not any(
+                fb in text_to_check for fb in ["sepakbola", "sepak bola", "liga 1", "timnas", "pssi", "persib", "persija"]
+            ):
+                continue
+
+            # Football keyword match
+            if any(kw in text_to_check for kw in keywords):
+                seen.add(link)
+                pub_date = post.get("date", "")
+                collected.append({
+                    "url": normalize_portal_url(link),
+                    "title": title_clean,
+                    "published_date": normalize_timestamp(pub_date),
+                    "archive_date": pub_date[:10] if len(pub_date) >= 10 else "",
+                })
+                if max_articles > 0 and len(collected) >= max_articles:
+                    break
+
+        page += 1
 
     return collected
 
@@ -500,40 +732,78 @@ def run_sitemap_backfill(
     if not resume:
         # A. Sitemap discovery
         if mode in ("sitemap", "both"):
-            target_sitemaps: List[str] = []
+            sitemaps_to_crawl: List[tuple[str, str]] = []  # (portal_name, sitemap_url)
             if sitemap_url:
-                target_sitemaps.append(sitemap_url)
-            elif portal:
+                sitemaps_to_crawl.append((target_portal, sitemap_url))
+            elif portal and portal.lower() != "all":
                 p_key = portal.lower().strip()
-                target_sitemaps.extend(KNOWN_PORTAL_SITEMAPS.get(p_key, []))
+                for sm in KNOWN_PORTAL_SITEMAPS.get(p_key, []):
+                    sitemaps_to_crawl.append((p_key, sm))
             else:
-                for p in ["detik", "antara", "bolanet"]:
-                    target_sitemaps.extend(KNOWN_PORTAL_SITEMAPS.get(p, []))
+                for p_name, urls in KNOWN_PORTAL_SITEMAPS.items():
+                    for sm in urls:
+                        sitemaps_to_crawl.append((p_name, sm))
 
-            for sm_url in target_sitemaps:
+            for p_name, sm_url in sitemaps_to_crawl:
                 discovered = fetch_sitemap_urls(
                     sm_url,
                     filter_keywords=DEFAULT_FOOTBALL_KEYWORDS,
                     max_urls=max_articles
                 )
-                added = frontier.add_candidates(discovered, portal=target_portal)
+                added = frontier.add_candidates(discovered, portal=p_name)
                 new_candidates_added += added
-                logger.info(f"Sitemap {sm_url}: added {added} new candidates to frontier")
+                logger.info(f"Sitemap {p_name} ({sm_url}): added {added} new candidates to frontier")
+                print(f"[+] Sitemap {p_name}: discovered {len(discovered)} items ({added} new candidates queued)")
 
-        # B. Archive date index discovery
+        # B. Archive date index & WP-REST discovery
         if mode in ("archive", "both") and start_date and end_date:
-            archive_items = fetch_archive_articles(
-                portal=target_portal,
-                start_date=start_date,
-                end_date=end_date,
-                max_articles=max_articles
-            )
-            added = frontier.add_candidates(archive_items, portal=target_portal)
-            new_candidates_added += added
-            logger.info(f"Archive index ({start_date} to {end_date}): added {added} new candidates to frontier")
+            portals_to_archive = []
+            if portal and portal.lower() == "all":
+                portals_to_archive.extend(list(ARCHIVE_PORTAL_CONFIGS.keys()))
+                portals_to_archive.extend(list(WORDPRESS_REST_PORTALS.keys()))
+            elif portal:
+                portals_to_archive.append(portal.lower().strip())
+            else:
+                portals_to_archive.append(target_portal)
+
+            summary = frontier.get_frontier_summary()
+            existing_counts = {p: p_data.get("total", 0) for p, p_data in summary.get("portals", {}).items()}
+
+            for p_item in portals_to_archive:
+                # In 'all' mode, skip re-crawling portals that already have thousands of items in frontier
+                if portal and portal.lower() == "all" and existing_counts.get(p_item, 0) >= 5000:
+                    print(f"[*] Archive {p_item}: already has {existing_counts[p_item]} items in frontier, skipping redundant index crawl.")
+                    continue
+
+                if p_item in WORDPRESS_REST_PORTALS:
+                    wp_endpoint = WORDPRESS_REST_PORTALS[p_item]
+                    wp_items = fetch_wordpress_rest_articles(
+                        portal=p_item,
+                        base_api_url=wp_endpoint,
+                        start_date=start_date,
+                        end_date=end_date,
+                        max_articles=max_articles,
+                    )
+                    added = frontier.add_candidates(wp_items, portal=p_item)
+                    new_candidates_added += added
+                    logger.info(f"WP-REST ({p_item}): added {added} new candidates to frontier")
+                    print(f"[+] WP-REST {p_item}: discovered {len(wp_items)} items ({added} new candidates queued)")
+                else:
+                    archive_items = fetch_archive_articles(
+                        portal=p_item,
+                        start_date=start_date,
+                        end_date=end_date,
+                        max_articles=max_articles,
+                    )
+                    added = frontier.add_candidates(archive_items, portal=p_item)
+                    new_candidates_added += added
+                    logger.info(f"Archive index {p_item} ({start_date} to {end_date}): added {added} new candidates to frontier")
+                    print(f"[+] Archive {p_item}: discovered {len(archive_items)} items ({added} new candidates queued)")
 
     # 4. Ingestion / Extraction Phase from Persistent Frontier
-    batch = frontier.get_pending_batch(limit=max_articles, portal=portal if portal else None)
+    portal_filter = None if (not portal or portal.lower() == "all") else portal.lower().strip()
+    batch_limit = max_articles if (max_articles and max_articles > 0) else 5000000
+    batch = frontier.get_pending_batch(limit=batch_limit, portal=portal_filter)
     if not batch:
         summary = frontier.get_frontier_summary()
         return {
@@ -554,11 +824,13 @@ def run_sitemap_backfill(
     written_count = 0
     channel = PortalNewsChannel()
 
+    db_lock = threading.Lock()
+
     def _extract_and_stream_worker(cand: Dict[str, Any]) -> bool:
         nonlocal written_count
         u = cand["url"]
         try:
-            res = channel.extract(u)
+            res = channel.extract(u, config={"disable_headless": True})
             if res.get("status") == "success":
                 content = res.get("content", "").strip()
                 if len(content) >= min_content_length:
@@ -579,14 +851,18 @@ def run_sitemap_backfill(
                             f.flush()
                         written_count += 1
 
-                    frontier.mark_completed(u)
+                    with db_lock:
+                        frontier.mark_completed(u)
                     return True
                 else:
-                    frontier.mark_failed(u, error="Content length below minimum threshold")
+                    with db_lock:
+                        frontier.mark_failed(u, error="Content length below minimum threshold")
             else:
-                frontier.mark_failed(u, error=res.get("error", "Extraction failed"))
+                with db_lock:
+                    frontier.mark_failed(u, error=res.get("error", "Extraction failed"))
         except Exception as e:
-            frontier.mark_failed(u, error=str(e))
+            with db_lock:
+                frontier.mark_failed(u, error=str(e))
         return False
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
