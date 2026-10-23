@@ -3,10 +3,12 @@ Portal News Channel for Indonesian Sports.
 Implements multi-backend fallback: RSS feeds -> Jina Reader -> Direct HTTP.
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 import urllib.request
 import urllib.parse
 from urllib.parse import urlparse, urljoin
+import json
+import html as html_lib
 import re
 
 from .base import SportsChannel
@@ -149,6 +151,21 @@ def extract_clean_article_text(html: str) -> str:
     """
     if not html:
         return ""
+
+    # 0. Fast-path: Inertia.js JSON payload (used by Jawa Pos Group: KaltengPos, RiauPos, Radar, etc.)
+    if 'data-page="' in html:
+        try:
+            match = re.search(r'data-page="([^"]+)"', html)
+            if match:
+                page_data = json.loads(html_lib.unescape(match.group(1)))
+                article_data = page_data.get("props", {}).get("article") or {}
+                if isinstance(article_data, dict) and article_data.get("content"):
+                    raw_content = article_data.get("content", "")
+                    clean_txt = clean_news_text(re.sub(r"<[^>]+>", " ", raw_content))
+                    if len(clean_txt) >= 100:
+                        return clean_txt
+        except Exception:
+            pass
 
     # 1. Primary: Trafilatura (cleans CSS, inline JS, ad widgets, nav links for DAPT NLP)
     if HAS_TRAFILATURA and trafilatura is not None:

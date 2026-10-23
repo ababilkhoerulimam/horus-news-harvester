@@ -1,0 +1,199 @@
+# Target Configuration for Indonesian Forest & Land Fires (Karhutla) Harvester
+# Designed for Domain-Adaptive Pre-Training (DAPT) and Social Network / Attribution Analysis (SNA)
+
+topic:
+  id: "karhutla"
+  name: "Kebakaran Hutan dan Lahan (Karhutla) Indonesia"
+  description: "Monitoring, atribusi aktor/korporasi, hotspot, dan dampak kabut asap di episentrum Sumatera & Kalimantan"
+  default_output: "data/raw/news/karhutla.jsonl"
+  default_dapt_output: "data/processed/nusabert_karhutla_dapt.txt"
+
+keywords:
+  # Peristiwa fisik, titik panas & asap
+  events:
+    - "karhutla"
+    - "kebakaran hutan"
+    - "kebakaran lahan"
+    - "titik panas"
+    - "hotspot"
+    - "kabut asap"
+    - "lahan gambut"
+    - "kedalaman gambut"
+    - "kebakaran gambut"
+    - "titik api"
+    - "sebaran asap"
+    - "jarak pandang"
+    - "ispa"
+    - "kualitas udara"
+    - "ispu"
+    - "bencana kabut asap"
+    - "darurat asap"
+
+  # Operasi pemadaman & respon lapangan
+  operations:
+    - "manggala agni"
+    - "bnpb"
+    - "bpbd"
+    - "water bombing"
+    - "helikopter water bombing"
+    - "teknologi modifikasi cuaca"
+    - "tmc hujan buatan"
+    - "sekat kanal"
+    - "sumur bor gambut"
+    - "pemadaman darat"
+    - "satgas karhutla"
+    - "tni polri padamkan"
+
+  # Penegakan hukum, investigasi & atribusi aktor
+  enforcement:
+    - "gakkum klhk"
+    - "segel konsesi"
+    - "penyegelan lahan"
+    - "tersangka karhutla"
+    - "tersangka korporasi"
+    - "pembakaran berencana"
+    - "gugatan perdata karhutla"
+    - "denda karhutla"
+    - "kejahatan lingkungan"
+    - "pidana lingkungan hidup"
+    - "polda riau karhutla"
+    - "polda kalteng karhutla"
+    - "polda sumsel karhutla"
+
+  # Sektor industri, perizinan & konsesi
+  industry_and_land:
+    - "kelapa sawit"
+    - "kebun sawit"
+    - "hutan tanaman industri"
+    - "hti"
+    - "hak guna usaha"
+    - "hgu"
+    - "moratorium gambut"
+    - "izin pelepasan kawasan hutan"
+    - "perambahan hutan"
+    - "land clearing"
+    - "bakar lahan buka kebun"
+
+  # Lokasi geografis kritis (ground-zero)
+  focal_regions:
+    riau:
+      - "riau"
+      - "pekanbaru"
+      - "bengkalis"
+      - "rokan hilir"
+      - "pelalawan"
+      - "siak"
+      - "dumai"
+      - "indragiri hilir"
+      - "indragiri hulu"
+    kalimantan_tengah:
+      - "palangka raya"
+      - "pulang pisau"
+      - "kotawaringin timur"
+      - "sampit"
+      - "kapuas"
+      - "pangkalan bun"
+      - "kobar"
+    kalimantan_barat:
+      - "pontianak"
+      - "kubu raya"
+      - "ketapang"
+      - "sambas"
+      - "sintang"
+    sumatera_selatan:
+      - "ogan komering ilir"
+      - "oki"
+      - "musi banyuasin"
+      - "banyuasin"
+      - "palembang asap"
+    jambi:
+      - "muaro jambi"
+      - "tanjung jabung timur"
+      - "tanjung jabung barat"
+
+# Portal Media Prioritas untuk Karhutla
+target_portals:
+  # 1. Investigasi & Jurnalisme Lingkungan (Otoritatif & Mendalam)
+  environmental_investigative:
+    - domain: "mongabay.co.id"
+      name: "Mongabay Indonesia"
+      type: "investigative_environment"
+      adapter: "sitemap"
+      sitemap_url: "https://www.mongabay.co.id/sitemap_index.xml"
+    - domain: "betahita.id"
+      name: "Betahita"
+      type: "investigative_environment"
+      adapter: "sitemap"
+      sitemap_url: "https://betahita.id/sitemap.xml"
+    - domain: "forestdigest.com"
+      name: "Forest Digest"
+      type: "policy_forestry"
+      adapter: "wordpress_rest"
+      wp_api_base: "https://forestdigest.com/wp-json/wp/v2"
+    - domain: "projectmultatuli.org"
+      name: "Project Multatuli"
+      type: "investigative"
+      adapter: "wordpress_rest"
+      wp_api_base: "https://projectmultatuli.org/wp-json/wp/v2"
+
+  # 2. Episentrum Sumatera (Riau, Jambi, Sumsel)
+  sumatra_ground_zero:
+    - domain: "goriau.com"
+      name: "GoRiau"
+      region: "Riau"
+      adapter: "sitemap"
+      sitemap_url: "https://www.goriau.com/sitemap.xml"
+    - domain: "riaupos.co"
+      name: "Riau Pos"
+      region: "Riau"
+      adapter: "sitemap"
+      sitemap_url: "https://riaupos.jawapos.com/sitemap.xml"
+    - domain: "jambiekspres.co.id"
+      name: "Jambi Ekspres"
+      region: "Jambi"
+      adapter: "sitemap"
+      sitemap_url: "https://jambiekspres.jawapos.com/sitemap.xml"
+    - domain: "sumeks.co"
+      name: "Sumeks (Sumatera Ekspres)"
+      region: "Sumatera Selatan"
+      adapter: "sitemap"
+      sitemap_url: "https://sumeks.disway.id/sitemap.xml"
+
+  # 3. Episentrum Kalimantan (Kalteng, Kalbar, Kalsel, Kaltim)
+  kalimantan_ground_zero:
+    - domain: "borneonews.co.id"
+      name: "Borneo News"
+      region: "Kalimantan Tengah"
+      adapter: "sitemap"
+      sitemap_url: "https://www.borneonews.co.id/sitemap.xml"
+    - domain: "kaltengpos.co"
+      name: "Kalteng Pos"
+      region: "Kalimantan Tengah"
+      adapter: "sitemap"
+      sitemap_url: "https://kaltengpos.jawapos.com/sitemap.xml"
+    - domain: "pontianakpost.jawapos.com"
+      name: "Pontianak Post"
+      region: "Kalimantan Barat"
+      adapter: "sitemap"
+      sitemap_url: "https://pontianakpost.jawapos.com/sitemap.xml"
+    - domain: "banjarmasinpost.co.id"
+      name: "Banjarmasin Post"
+      region: "Kalimantan Selatan"
+      adapter: "sitemap"
+      sitemap_url: "https://banjarmasin.tribunnews.com/sitemap.xml"
+    - domain: "niaga.asia"
+      name: "Niaga Asia"
+      region: "Kalimantan Timur"
+      adapter: "wordpress_rest"
+      wp_api_base: "https://www.niaga.asia/wp-json/wp/v2"
+
+  # 4. Media Nasional Arus Utama (Kebijakan Pusat & Data BNPB/BMKG/KLHK)
+  national_wire:
+    - domain: "antaranews.com"
+      name: "LKBN Antara"
+    - domain: "kompas.com"
+      name: "Kompas.com"
+    - domain: "tempo.co"
+      name: "Tempo.co"
+    - domain: "detik.com"
+      name: "Detikcom"
