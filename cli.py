@@ -96,6 +96,44 @@ def main():
     dapt_parser.add_argument("--min-words", "-w", type=int, default=50, help="Minimum words per article (default: 50)")
     dapt_parser.add_argument("--format", "-f", choices=["line", "document"], default="line", help="Layout format: 'line' or 'document' (default: line)")
 
+    # topic command (National News Intelligence Harvester)
+    topic_parser = subparsers.add_parser("topic", help="National News Intelligence Harvester (NNIH) topic operations")
+    topic_subparsers = topic_parser.add_subparsers(dest="topic_action", help="Topic actions")
+
+    # topic init
+    t_init = topic_subparsers.add_parser("init", help="Generate starter topic configuration template")
+    t_init.add_argument("topic", help="Topic ID slug (e.g. karhutla, ikn, pemilu)")
+    t_init.add_argument("--output", "-o", default=None, help="Target YAML file path")
+
+    # topic validate
+    t_val = topic_subparsers.add_parser("validate", help="Validate topic configuration syntax and portal surface")
+    t_val.add_argument("topic", help="Topic ID or YAML file path")
+
+    # topic list
+    topic_subparsers.add_parser("list", help="List all configured intelligence topics")
+
+    # topic harvest
+    t_harv = topic_subparsers.add_parser("harvest", help="Run discovery and extraction for topic")
+    t_harv.add_argument("--topic", "-t", required=True, help="Topic ID (e.g. karhutla)")
+    t_harv.add_argument("--days", "-d", type=int, default=365, help="Past days to crawl (default: 365)")
+    t_harv.add_argument("--workers", "-w", type=int, default=16, help="Worker threads (default: 16)")
+    t_harv.add_argument("--limit", "-l", type=int, default=100000, help="Article harvest limit")
+    t_harv.add_argument("--resume", "-r", action="store_true", help="Resume pending frontier queue")
+    t_harv.add_argument("--stats", action="store_true", help="Display topic frontier stats")
+    t_harv.add_argument("--output", "-o", default=None, help="Output JSONL file path")
+
+    # topic export
+    t_exp = topic_subparsers.add_parser("export", help="Export harvested JSONL to Parquet/SQLite/DuckDB")
+    t_exp.add_argument("--topic", "-t", required=True, help="Topic ID")
+    t_exp.add_argument("--format", "-f", default="parquet", choices=["parquet", "sqlite", "duckdb"])
+    t_exp.add_argument("--output", "-o", default=None, help="Target export path")
+
+    # topic dapt
+    t_dapt = topic_subparsers.add_parser("dapt", help="Compile text corpus for NusaBERT DAPT MLM")
+    t_dapt.add_argument("--topic", "-t", required=True, help="Topic ID")
+    t_dapt.add_argument("--min-words", "-w", type=int, default=50, help="Minimum word count")
+    t_dapt.add_argument("--output", "-o", default=None, help="Target .txt corpus file")
+
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -292,6 +330,68 @@ def main():
         else:
             print(f"[!] Corpus preparation failed: {res.get('message')}")
             sys.exit(1)
+
+    elif args.command == "topic":
+        from scripts.topic_harvester import (
+            generate_topic_template,
+            validate_topic,
+            list_available_topics,
+            harvest_topic,
+            export_topic_dataset,
+            generate_topic_dapt_corpus,
+        )
+        if args.topic_action == "init":
+            path = generate_topic_template(args.topic, output_path=args.output)
+            print(f"[+] Created starter topic template: {path}")
+
+        elif args.topic_action == "validate":
+            try:
+                rep = validate_topic(args.topic)
+                print(f"\n=== Topic Diagnostic: {rep['name']} [{rep['id']}] ===")
+                print(f"Description:     {rep['description']}")
+                print(f"Total Keywords:  {rep['total_keywords']}")
+                print(f"Sample Keywords: {', '.join(rep['sample_keywords'])}")
+                print(f"Target Portals:  {rep['total_resolved_portals']} portals resolved")
+                for p in rep["portals"][:8]:
+                    print(f"  * {p['name']} ({p['domain']}) -> {p['adapter']}")
+                if len(rep["portals"]) > 8:
+                    print(f"  ... and {len(rep['portals']) - 8} more portals")
+                print(f"Default Output:  {rep['output_path']}")
+                print("==================================================")
+            except Exception as e:
+                print(f"[!] Validation failed: {e}")
+                sys.exit(1)
+
+        elif args.topic_action == "list":
+            t_list = list_available_topics()
+            print(f"\n=== Configured Intelligence Topics ({len(t_list)}) ===")
+            for t in t_list:
+                print(f"  * [{t['id']}] {t['name']}")
+                if t['description']:
+                    print(f"      {t['description']}")
+            print("==================================================")
+
+        elif args.topic_action == "harvest":
+            harvest_topic(
+                topic_name=args.topic,
+                days=args.days,
+                workers=args.workers,
+                limit=args.limit,
+                resume=args.resume,
+                stats_only=args.stats,
+                output_override=args.output,
+            )
+
+        elif args.topic_action == "export":
+            res = export_topic_dataset(args.topic, format_type=args.format, out_path=args.output)
+            print(json.dumps(res, indent=2))
+
+        elif args.topic_action == "dapt":
+            res = generate_topic_dapt_corpus(args.topic, min_words=args.min_words, out_path=args.output)
+            print(json.dumps(res, indent=2))
+
+        else:
+            topic_parser.print_help()
 
     else:
         parser.print_help()

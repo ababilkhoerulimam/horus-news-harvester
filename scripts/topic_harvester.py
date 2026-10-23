@@ -1,7 +1,8 @@
 """
-Topic-Agnostic National News Intelligence Harvester.
-Harvests historical and live articles for any configured topic (e.g. Karhutla, IKN, Pemilu, etc.)
-Leverages curl_cffi TLS impersonation, sitemaps, WP-REST APIs, and SQLite WAL frontier.
+Topic-Agnostic National News Intelligence Harvester (NNIH).
+Declarative crawling engine for Indonesian national intelligence topics.
+Leverages Pydantic v2 validation, 66-portal preset auto-routing,
+curl_cffi TLS JA4 impersonation, Inertia.js unpacking, and SQLite WAL frontier.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from channels.portal_news import PortalNewsChannel, normalize_portal_url, extrac
 from processors.cleaner import clean_news_text
 from processors.crawl_frontier import CrawlFrontier
 from processors.http_client import default_http_client, DEFAULT_PROXIES_FILE
+from processors.topic_config import TopicConfig, load_topic_config
+from processors.portal_catalog import resolve_topic_portals, ResolvedPortal, CATALOG_PRESETS
 from scripts.sitemap_backfill import fetch_sitemap_urls, fetch_wordpress_rest_articles
 
 logging.basicConfig(
@@ -37,39 +40,110 @@ logging.basicConfig(
 logger = logging.getLogger("topic_harvester")
 
 
-def load_topic_config(topic_name: str) -> Dict[str, Any]:
-    """Loads and validates a topic configuration YAML file."""
-    topic_path = Path("config/topics") / f"{topic_name}.yaml"
-    if not topic_path.exists():
-        raise FileNotFoundError(f"Topic config not found: {topic_path}")
+def generate_topic_template(topic_id: str, output_path: Optional[str] = None) -> Path:
+    """Generates a clean, well-documented starter topic configuration YAML."""
+    clean_id = topic_id.strip().lower().replace(" ", "_")
+    target_path = Path(output_path) if output_path else Path("config/topics") / f"{clean_id}.yaml"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(topic_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return cfg
+    template_content = f"""# ==============================================================================
+# Topic Configuration: {clean_id.upper()}
+# National News Intelligence Harvester (NNIH)
+# ==============================================================================
+
+topic:
+  id: "{clean_id}"
+  name: "{clean_id.replace('_', ' ').title()}"
+  description: "Intelligence monitoring and discourse analysis for {clean_id.replace('_', ' ')}"
+  default_output: "data/raw/news/{clean_id}.jsonl"
+  default_dapt_output: "data/processed/nusabert_{clean_id}_dapt.txt"
+
+# ------------------------------------------------------------------------------
+# Keywords Taxonomy (Flat list or nested category dictionary)
+# ------------------------------------------------------------------------------
+keywords:
+  # Core events and phenomena
+  events:
+    - "{clean_id.replace('_', ' ')}"
+    - "{clean_id.replace('_', '-')}"
+
+  # Governance, regulatory, and policy actions
+  policy:
+    - "kebijakan"
+    - "pemerintah"
+    - "kementerian"
+
+  # Geographic locations / focal regions
+  focal_regions:
+    - "indonesia"
+    - "jakarta"
+
+# ------------------------------------------------------------------------------
+# Target Portals Configuration
+# Built-in presets available:
+#   * national_wire: 15 Tier-1 mainstream national media (Detik, Kompas, Antara, CNN, Tempo, etc.)
+#   * regional_epicenters: Regional newspapers (Kalteng Pos, Riau Pos, Sumeks, BeritaJatim, etc.)
+#   * investigative_environment: Investigative desks (Mongabay, Betahita, Forest Digest, Multatuli)
+#   * all_66_catalog: All 66 fingerprinted national and regional news portals
+# ------------------------------------------------------------------------------
+portals:
+  presets:
+    - "national_wire"
+    - "regional_epicenters"
+
+  # Optional: Explicit additional portals to include
+  include: []
+
+  # Optional: Domains to blacklist from crawling
+  exclude: []
+
+# ------------------------------------------------------------------------------
+# Output & Analytics Configuration
+# ------------------------------------------------------------------------------
+output:
+  format: "jsonl"              # Options: jsonl, parquet, sqlite, duckdb
+  min_word_count: 50           # Filter threshold for DAPT language modeling
+"""
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write(template_content)
+
+    logger.info(f"[+] Generated starter topic template at '{target_path}'")
+    return target_path
 
 
-def extract_topic_keywords(cfg: Dict[str, Any]) -> List[str]:
-    """Extracts a flat, deduplicated list of lowercase keywords from topic config."""
-    kws = set()
-    raw_kw = cfg.get("keywords", {})
-    if isinstance(raw_kw, list):
-        for k in raw_kw:
-            kws.add(str(k).lower().strip())
-    elif isinstance(raw_kw, dict):
-        for k, v in raw_kw.items():
-            if isinstance(v, list):
-                for item in v:
-                    kws.add(str(item).lower().strip())
-            elif isinstance(v, dict):
-                for sub_k, sub_v in v.items():
-                    if isinstance(sub_v, list):
-                        for item in sub_v:
-                            kws.add(str(item).lower().strip())
-    return sorted(list(kws))
+def validate_topic(topic_name: str) -> Dict[str, Any]:
+    """Inspects and validates a topic configuration, reporting stats and resolved surface."""
+    cfg = load_topic_config(topic_name)
+    keywords = cfg.get_keywords()
+    resolved_portals = resolve_topic_portals(cfg)
+
+    report = {
+        "valid": True,
+        "id": cfg.topic.id,
+        "name": cfg.topic.name,
+        "description": cfg.topic.description,
+        "total_keywords": len(keywords),
+        "sample_keywords": keywords[:10],
+        "total_resolved_portals": len(resolved_portals),
+        "resolved_portals_count": len(resolved_portals),
+        "portals": [
+            {
+                "domain": p.domain,
+                "name": p.name,
+                "adapter": p.adapter,
+                "endpoint": p.wp_api_base if p.adapter == "wordpress_rest" else p.sitemap_url,
+                "region": p.region,
+            }
+            for p in resolved_portals
+        ],
+        "output_path": str(cfg.get_output_path()),
+        "dapt_path": str(cfg.get_dapt_output_path()),
+    }
+    return report
 
 
 def discover_topic_articles(
-    cfg: Dict[str, Any],
+    cfg: TopicConfig,
     frontier: CrawlFrontier,
     days: int = 365,
     limit_per_portal: int = 5000,
@@ -78,9 +152,11 @@ def discover_topic_articles(
     Discovers candidate articles matching topic keywords across targeted portals.
     Queues discovered URLs into the topic's frontier database.
     """
-    topic_id = cfg.get("topic", {}).get("id", "general")
-    keywords = extract_topic_keywords(cfg)
-    logger.info(f"[*] Discovering candidates for topic '{topic_id}' with {len(keywords)} keywords")
+    topic_id = cfg.topic.id
+    keywords = cfg.get_keywords()
+    resolved_portals = resolve_topic_portals(cfg)
+
+    logger.info(f"[*] Discovering candidates for topic '{topic_id}' across {len(resolved_portals)} portals ({len(keywords)} keywords)")
 
     now = datetime.now(timezone.utc)
     start_dt = now - timedelta(days=days)
@@ -88,25 +164,14 @@ def discover_topic_articles(
     end_date_str = now.strftime("%Y-%m-%d")
 
     total_discovered = 0
-    target_portals = cfg.get("target_portals", {})
 
-    flat_portals = []
-    for cat_name, portal_list in target_portals.items():
-        if isinstance(portal_list, list):
-            for p in portal_list:
-                flat_portals.append(p)
-
-    for p in flat_portals:
-        domain = p.get("domain", "")
-        name = p.get("name", domain)
-        adapter = p.get("adapter", "sitemap")
-        portal_id = domain.replace(".", "_")
-
-        logger.info(f"[*] Probing portal: {name} ({domain}) via {adapter}")
+    for p in resolved_portals:
+        portal_id = p.portal_id
+        logger.info(f"[*] Probing portal: {p.name} ({p.domain}) via {p.adapter}")
         portal_items = []
 
-        if adapter == "wordpress_rest":
-            wp_base = p.get("wp_api_base") or f"https://{domain}/wp-json/wp/v2"
+        if p.adapter == "wordpress_rest":
+            wp_base = p.wp_api_base or f"https://{p.domain}/wp-json/wp/v2"
             try:
                 wp_articles = fetch_wordpress_rest_articles(
                     portal=portal_id,
@@ -119,10 +184,10 @@ def discover_topic_articles(
                 for a in wp_articles:
                     portal_items.append({"url": a["url"], "published_date": a.get("published_date", "")})
             except Exception as e:
-                logger.warning(f"[-] WP-REST failed for {domain}: {e}")
+                logger.warning(f"[-] WP-REST failed for {p.domain}: {e}")
 
-        elif adapter == "sitemap":
-            sitemap_url = p.get("sitemap_url") or f"https://{domain}/sitemap.xml"
+        elif p.adapter == "sitemap":
+            sitemap_url = p.sitemap_url or f"https://{p.domain}/sitemap.xml"
             try:
                 sm_items = fetch_sitemap_urls(
                     sitemap_url,
@@ -131,7 +196,7 @@ def discover_topic_articles(
                 )
                 portal_items.extend(sm_items)
             except Exception as e:
-                logger.warning(f"[-] Sitemap failed for {domain}: {e}")
+                logger.warning(f"[-] Sitemap failed for {p.domain}: {e}")
 
         if portal_items:
             queued = frontier.add_candidates(portal_items, portal=portal_id)
@@ -150,11 +215,12 @@ def harvest_topic(
     limit: int = 100000,
     resume: bool = False,
     stats_only: bool = False,
+    output_override: Optional[str] = None,
 ):
     """Orchestrates topic discovery and concurrent extraction to JSONL."""
     cfg = load_topic_config(topic_name)
-    topic_id = cfg.get("topic", {}).get("id", topic_name)
-    output_file = cfg.get("topic", {}).get("default_output", f"data/raw/news/{topic_id}.jsonl")
+    topic_id = cfg.topic.id
+    output_file = output_override or str(cfg.get_output_path())
     db_path = f"data/state/crawl_{topic_id}_frontier.db"
 
     frontier = CrawlFrontier(db_path=db_path)
@@ -216,7 +282,7 @@ def harvest_topic(
                         }
                         return norm_url, True, doc, ""
 
-            # 2. Secondary fallback: portal_news channel pipeline
+            # 2. Secondary fallback: portal_news channel pipeline (Inertia.js + Trafilatura)
             res = channel.extract(norm_url, config={"disable_headless": True})
             if res.get("status") == "success" and res.get("content"):
                 doc = {
@@ -261,21 +327,226 @@ def harvest_topic(
     logger.info(f"[*] Topic '{topic_id}' harvest session finished. Total extracted: {processed_count}")
 
 
+def export_topic_dataset(
+    topic_name: str,
+    format_type: str = "parquet",
+    out_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """Exports harvested JSONL records into Parquet, SQLite, or DuckDB analytical formats."""
+    cfg = load_topic_config(topic_name)
+    input_file = cfg.get_output_path()
+    if not input_file.exists():
+        return {"status": "error", "message": f"Input file not found: {input_file}"}
+
+    records = []
+    with open(input_file, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped:
+                try:
+                    records.append(json.loads(stripped))
+                except Exception:
+                    pass
+
+    if not records:
+        return {"status": "warn", "message": "No records to export"}
+
+    import pandas as pd
+    df = pd.DataFrame(records)
+
+    target_fmt = format_type.lower()
+    if target_fmt == "parquet":
+        target = Path(out_path) if out_path else Path(f"data/analytics/parquet/{cfg.topic.id}.parquet")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(target, index=False)
+        return {"status": "success", "count": len(df), "target": str(target), "format": "parquet"}
+
+    elif target_fmt == "sqlite":
+        target = Path(out_path) if out_path else Path(f"data/analytics/{cfg.topic.id}.db")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        import sqlite3
+        with sqlite3.connect(target) as conn:
+            df.to_sql("articles", conn, if_exists="replace", index=False)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_art_portal ON articles(portal);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_art_topic ON articles(topic);")
+        return {"status": "success", "count": len(df), "target": str(target), "format": "sqlite"}
+
+    elif target_fmt == "duckdb":
+        try:
+            import duckdb
+        except ImportError:
+            return {"status": "error", "message": "duckdb library not installed"}
+        target = Path(out_path) if out_path else Path(f"data/analytics/{cfg.topic.id}.duckdb")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(target))
+        conn.execute("CREATE OR REPLACE TABLE articles AS SELECT * FROM df;")
+        conn.close()
+        return {"status": "success", "count": len(df), "target": str(target), "format": "duckdb"}
+
+    return {"status": "error", "message": f"Unsupported format: {format_type}"}
+
+
+def generate_topic_dapt_corpus(
+    topic_name: str,
+    min_words: int = 50,
+    out_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """Compiles clean, normalized text corpus for NusaBERT/IndoBERT domain pretraining."""
+    cfg = load_topic_config(topic_name)
+    input_file = cfg.get_output_path()
+    target_file = Path(out_path) if out_path else cfg.get_dapt_output_path()
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if not input_file.exists():
+        return {"status": "error", "message": f"Input file not found: {input_file}"}
+
+    written = 0
+    total_words = 0
+    seen_hashes = set()
+
+    with open(input_file, "r", encoding="utf-8", errors="replace") as in_f, \
+         open(target_file, "w", encoding="utf-8") as out_f:
+        for line in in_f:
+            if not line.strip():
+                continue
+            try:
+                doc = json.loads(line)
+                content = clean_news_text(doc.get("content", ""))
+                words = content.split()
+                if len(words) < min_words:
+                    continue
+
+                # Hash deduplication
+                h = hash(content)
+                if h in seen_hashes:
+                    continue
+                seen_hashes.add(h)
+
+                out_f.write(content + "\n\n")
+                written += 1
+                total_words += len(words)
+            except Exception:
+                continue
+
+    return {
+        "status": "success",
+        "documents": written,
+        "total_words": total_words,
+        "target": str(target_file),
+    }
+
+
+def list_available_topics() -> List[Dict[str, str]]:
+    """Discovers and parses all topic YAML definitions in config/topics/."""
+    topics_dir = Path("config/topics")
+    if not topics_dir.exists():
+        return []
+
+    found = []
+    for f in sorted(topics_dir.glob("*.yaml")):
+        try:
+            cfg = load_topic_config(f)
+            found.append({
+                "id": cfg.topic.id,
+                "name": cfg.topic.name,
+                "description": cfg.topic.description or "",
+                "path": str(f),
+            })
+        except Exception:
+            found.append({
+                "id": f.stem,
+                "name": f.stem,
+                "description": "(Error parsing configuration)",
+                "path": str(f),
+            })
+    return found
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Topic-Agnostic National News Intelligence Harvester")
-    parser.add_argument("--topic", "-t", default="karhutla", help="Topic ID (e.g. karhutla)")
-    parser.add_argument("--days", "-d", type=int, default=365, help="Past days to crawl (default: 365)")
-    parser.add_argument("--workers", "-w", type=int, default=16, help="Worker threads (default: 16)")
-    parser.add_argument("--limit", "-l", type=int, default=100000, help="Article harvest limit")
-    parser.add_argument("--resume", "-r", action="store_true", help="Resume pending frontier queue")
-    parser.add_argument("--stats", action="store_true", help="Display topic frontier stats")
+    parser = argparse.ArgumentParser(description="National News Intelligence Harvester (NNIH)")
+    subparsers = parser.add_subparsers(dest="action", help="Topic commands")
+
+    # init action
+    init_parser = subparsers.add_parser("init", help="Generate starter topic configuration template")
+    init_parser.add_argument("topic", help="Topic ID slug (e.g. karhutla, ikn, pemilu)")
+    init_parser.add_argument("--output", "-o", default=None, help="Target YAML file path")
+
+    # validate action
+    val_parser = subparsers.add_parser("validate", help="Validate topic configuration syntax and surface")
+    val_parser.add_argument("topic", help="Topic ID or YAML file path")
+
+    # list action
+    subparsers.add_parser("list", help="List all configured intelligence topics")
+
+    # harvest action
+    harv_parser = subparsers.add_parser("harvest", help="Run discovery and extraction for topic")
+    harv_parser.add_argument("--topic", "-t", required=True, help="Topic ID (e.g. karhutla)")
+    harv_parser.add_argument("--days", "-d", type=int, default=365, help="Past days to crawl (default: 365)")
+    harv_parser.add_argument("--workers", "-w", type=int, default=16, help="Worker threads (default: 16)")
+    harv_parser.add_argument("--limit", "-l", type=int, default=100000, help="Article harvest limit")
+    harv_parser.add_argument("--resume", "-r", action="store_true", help="Resume pending frontier queue")
+    harv_parser.add_argument("--stats", action="store_true", help="Display topic frontier stats")
+    harv_parser.add_argument("--output", "-o", default=None, help="Output JSONL file path")
+
+    # export action
+    exp_parser = subparsers.add_parser("export", help="Export harvested JSONL to Parquet/SQLite/DuckDB")
+    exp_parser.add_argument("--topic", "-t", required=True, help="Topic ID")
+    exp_parser.add_argument("--format", "-f", default="parquet", choices=["parquet", "sqlite", "duckdb"])
+    exp_parser.add_argument("--output", "-o", default=None, help="Target export path")
+
+    # dapt action
+    dapt_parser = subparsers.add_parser("dapt", help="Compile text corpus for NusaBERT DAPT MLM")
+    dapt_parser.add_argument("--topic", "-t", required=True, help="Topic ID")
+    dapt_parser.add_argument("--min-words", "-w", type=int, default=50, help="Minimum word count")
+    dapt_parser.add_argument("--output", "-o", default=None, help="Target .txt corpus file")
 
     args = parser.parse_args()
-    harvest_topic(
-        topic_name=args.topic,
-        days=args.days,
-        workers=args.workers,
-        limit=args.limit,
-        resume=args.resume,
-        stats_only=args.stats,
-    )
+
+    if args.action == "init":
+        path = generate_topic_template(args.topic, output_path=args.output)
+        print(f"Created topic template: {path}")
+
+    elif args.action == "validate":
+        rep = validate_topic(args.topic)
+        print(f"\n=== Topic Diagnostic: {rep['name']} [{rep['id']}] ===")
+        print(f"Description:     {rep['description']}")
+        print(f"Total Keywords:  {rep['total_keywords']}")
+        print(f"Sample Keywords: {', '.join(rep['sample_keywords'])}")
+        print(f"Target Portals:  {rep['total_resolved_portals']} portals resolved")
+        for p in rep["portals"][:8]:
+            print(f"  * {p['name']} ({p['domain']}) -> {p['adapter']}")
+        if len(rep["portals"]) > 8:
+            print(f"  ... and {len(rep['portals']) - 8} more portals")
+        print(f"Default Output:  {rep['output_path']}")
+        print("==================================================")
+
+    elif args.action == "list":
+        t_list = list_available_topics()
+        print(f"\n=== Configured Intelligence Topics ({len(t_list)}) ===")
+        for t in t_list:
+            print(f"  * [{t['id']}] {t['name']}")
+            if t['description']:
+                print(f"      {t['description']}")
+        print("==================================================")
+
+    elif args.action == "harvest":
+        harvest_topic(
+            topic_name=args.topic,
+            days=args.days,
+            workers=args.workers,
+            limit=args.limit,
+            resume=args.resume,
+            stats_only=args.stats,
+            output_override=args.output,
+        )
+
+    elif args.action == "export":
+        res = export_topic_dataset(args.topic, format_type=args.format, out_path=args.output)
+        print(json.dumps(res, indent=2))
+
+    elif args.action == "dapt":
+        res = generate_topic_dapt_corpus(args.topic, min_words=args.min_words, out_path=args.output)
+        print(json.dumps(res, indent=2))
+
+    else:
+        parser.print_help()

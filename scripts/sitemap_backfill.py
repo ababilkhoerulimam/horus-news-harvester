@@ -667,8 +667,8 @@ def fetch_wordpress_rest_articles(
 
             text_to_check = f"{link} {title_clean} {content_sample}".lower()
 
-            # Exclude non-football sports explicitly
-            if any(nf in text_to_check for nf in NON_FOOTBALL_SPORTS) and not any(
+            # Exclude non-football sports explicitly only when harvesting default football topic
+            if not filter_keywords and any(nf in text_to_check for nf in NON_FOOTBALL_SPORTS) and not any(
                 fb in text_to_check for fb in ["sepakbola", "sepak bola", "liga 1", "timnas", "pssi", "persib", "persija"]
             ):
                 continue

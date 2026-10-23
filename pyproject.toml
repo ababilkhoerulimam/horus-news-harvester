@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "national-news-intelligence-harvester"
+version = "0.2.0"
+description = "Topic-Agnostic National News Intelligence Harvester for Indonesian Media"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Ababil Khoerul Imam", email = "ababilkhoerulimam@gmail.com"}
+]
+keywords = [
+    "scraper",
+    "crawler",
+    "nlp",
+    "indonesia",
+    "intelligence",
+    "news",
+    "karhutla",
+    "ikn",
+    "nusabert",
+    "curl-impersonate",
+    "inertiajs"
+]
+dependencies = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.1.0",
+    "pyyaml>=6.0.1",
+    "tqdm>=4.66.0",
+    "python-dateutil>=2.8.2",
+    "pydantic>=2.6.0",
+    "pandas>=2.2.0",
+    "pyarrow>=14.0.0",
+]
+
+[project.optional-dependencies]
+analytics = [
+    "duckdb>=0.10.0",
+]
+advanced-stealth = [
+    "curl_cffi>=0.7.0",
+    "trafilatura>=1.8.0",
+]
+all = [
+    "duckdb>=0.10.0",
+    "curl_cffi>=0.7.0",
+    "trafilatura>=1.8.0",
+]
+
+[project.scripts]
+nnih = "cli:main"

@@ -158,7 +158,15 @@ def extract_clean_article_text(html: str) -> str:
             match = re.search(r'data-page="([^"]+)"', html)
             if match:
                 page_data = json.loads(html_lib.unescape(match.group(1)))
-                article_data = page_data.get("props", {}).get("article") or {}
+                props = page_data.get("props", {})
+                article_data = (
+                    props.get("article")
+                    or props.get("post")
+                    or props.get("detail")
+                    or props.get("data")
+                    or props.get("news")
+                    or {}
+                )
                 if isinstance(article_data, dict) and article_data.get("content"):
                     raw_content = article_data.get("content", "")
                     clean_txt = clean_news_text(re.sub(r"<[^>]+>", " ", raw_content))

@@ -1,0 +1,94 @@
+# ==============================================================================
+# Topic Configuration: IKN (Ibu Kota Nusantara) Intelligence
+# National News Intelligence Harvester (NNIH)
+# ==============================================================================
+
+topic:
+  id: "ikn"
+  name: "Ibu Kota Nusantara (IKN) Pembangunan & Tata Ruang"
+  description: "Monitoring mega-proyek pemindahan ibu kota, infrastruktur KIPP, investasi, dan dinamika agraria/lingkungan"
+  default_output: "data/raw/news/ikn.jsonl"
+  default_dapt_output: "data/processed/nusabert_ikn_dapt.txt"
+
+# ------------------------------------------------------------------------------
+# Keywords Taxonomy
+# ------------------------------------------------------------------------------
+keywords:
+  # Pembangunan & Kawasan Inti
+  infrastructure:
+    - "ibu kota nusantara"
+    - "ikn nusantara"
+    - "kipp ikn"
+    - "istana garuda"
+    - "kantor presiden ikn"
+    - "jalan tol ikn"
+    - "bandara vvip ikn"
+    - "proyek ikn"
+    - "infrastruktur ikn"
+
+  # Kebijakan, Otorita & Kelembagaan
+  governance:
+    - "otorita ikn"
+    - "oikn"
+    - "bambang susantono"
+    - "basuki hadimuljono ikn"
+    - "kepala otorita ikn"
+    - "uu ikn"
+    - "revisi uu ikn"
+    - "keppres pemindahan ibu kota"
+    - "asn pindah ikn"
+
+  # Investasi, Anggaran & Konglomerasi
+  finance_and_investment:
+    - "investasi ikn"
+    - "konsorsium nusantara"
+    - "agung sedayu ikn"
+    - "sugianto kusuma"
+    - "apbn ikn"
+    - "groundbreaking ikn"
+    - "investor asing ikn"
+    - "insentif pajak ikn"
+    - "hak guna bangunan ikn"
+
+  # Isu Lingkungan, Agraria & Masyarakat Adat
+  land_and_social:
+    - "tanah adat ikn"
+    - "masyarakat adat paser"
+    - "ganti rugi lahan ikn"
+    - "deforestasi ikn"
+    - "koridor satwa ikn"
+    - "taman hutan raya soeharto"
+    - "tahura bukit soeharto"
+
+  # Geografi Episentrum
+  regions:
+    - "penajam paser utara"
+    - "ppu"
+    - "kutai kartanegara"
+    - "kukar"
+    - "sepaku"
+    - "balikpapan"
+    - "samarinda"
+    - "kalimantan timur"
+
+# ------------------------------------------------------------------------------
+# Target Portals Configuration
+# Combines national wire with Kalimantan regional network
+# ------------------------------------------------------------------------------
+portals:
+  presets:
+    - "national_wire"
+    - "regional_epicenters"
+    - "investigative_environment"
+
+  # Additional East Kalimantan specialized media
+  include:
+    - "niaga.asia"
+    - "katadata.co.id"
+    - "bisnis.com"
+
+  exclude: []
+
+output:
+  format: "jsonl"
+  min_word_count: 50

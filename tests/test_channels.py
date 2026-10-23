@@ -589,6 +589,43 @@ class TestSportsChannels(unittest.TestCase):
         self.assertIn("Timnas Indonesia meraih kemenangan", text)
         self.assertIn("tempo tinggi sejak menit pertama", text)
 
+    def test_extract_clean_article_text_inertia_js(self):
+        import html as html_lib
+        import json
+
+        raw_article_html = "<p>PALANGKA RAYA - Satgas Manggala Agni bersama BPBD Kalteng memadamkan titik api di kawasan lahan gambut.</p><p>Pemadaman darat dibantu helikopter water bombing untuk melokalisir sebaran asap pekat.</p>"
+        payload = {
+            "component": "NewsDetail",
+            "props": {
+                "article": {
+                    "id": 9981,
+                    "title": "Titik Panas Lahan Gambut Berhasil Dipadamkan",
+                    "content": raw_article_html,
+                }
+            }
+        }
+        encoded_data = html_lib.escape(json.dumps(payload))
+        inertia_html = f'<!DOCTYPE html><html><body><div id="app" data-page="{encoded_data}"></div></body></html>'
+
+        extracted = extract_clean_article_text(inertia_html)
+        self.assertIn("Satgas Manggala Agni bersama BPBD Kalteng", extracted)
+        self.assertIn("helikopter water bombing", extracted)
+        self.assertNotIn("<p>", extracted)
+
+        # Test alternative prop key: 'post'
+        payload_post = {
+            "props": {
+                "post": {
+                    "content": "<p>PEKANBARU - Patroli gabungan TNI POLRI menemukan indikasi pembakaran berencana di konsesi sawit.</p><p>Gakkum KLHK segera memasang plang penyegelan lahan seluas 50 hektar.</p>"
+                }
+            }
+        }
+        encoded_post = html_lib.escape(json.dumps(payload_post))
+        inertia_post_html = f'<div data-page="{encoded_post}"></div>'
+        extracted_post = extract_clean_article_text(inertia_post_html)
+        self.assertIn("Patroli gabungan TNI POLRI", extracted_post)
+        self.assertIn("Gakkum KLHK segera memasang plang", extracted_post)
+
     def test_consolidate_article_pages(self):
         page1 = "JAKARTA - Laga persahabatan berlangsung seru.\n\nTimnas mencetak gol pada menit ke-15 melalui sundulan tajam."
         # Page 2 repeats the lead intro but has novel continuation text
