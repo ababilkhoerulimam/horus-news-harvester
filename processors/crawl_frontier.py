@@ -5,10 +5,11 @@ and error states with WAL-mode concurrency for interrupted/crash-proof runs.
 """
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Set
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 
 DEFAULT_FRONTIER_DB = "data/state/crawl_frontier.db"
@@ -18,10 +19,15 @@ class CrawlFrontier:
     """
     Persistent SQLite queue for large-scale multi-day sports harvesting.
     Guarantees zero work lost on network interruption, crash, or manual termination.
+    Supports in-memory batch buffering to minimize SQLite disk lock contention.
     """
 
-    def __init__(self, db_path: str = DEFAULT_FRONTIER_DB):
+    def __init__(self, db_path: str = DEFAULT_FRONTIER_DB, batch_size: int = 50):
         self.db_path = Path(db_path)
+        self.batch_size = batch_size
+        self._lock = threading.Lock()
+        self._completed_buffer: List[Tuple[str, str]] = []  # (now_iso, url)
+        self._failed_buffer: List[Tuple[str, str, str]] = []  # (now_iso, error, url)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -96,7 +102,8 @@ class CrawlFrontier:
             return cursor.rowcount
 
     def get_pending_batch(self, limit: int = 100, portal: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Retrieves a batch of pending or retryable failed URLs."""
+        """Retrieves a batch of pending or retryable failed URLs (auto-flushes in-memory buffer first)."""
+        self.flush()
         query = """
             SELECT url, portal, title, published_date, archive_date, retry_count
             FROM crawl_frontier
@@ -114,6 +121,41 @@ class CrawlFrontier:
             cur = conn.execute(query, params)
             return [dict(r) for r in cur.fetchall()]
 
+    def claim_pending_batch(self, limit: int = 50, portal: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Atomically retrieves pending URLs and marks them 'in_progress' in a single transaction.
+        Prevents race conditions between concurrent 2-core worker processes.
+        """
+        self.flush()
+        query = """
+            SELECT url, portal, title, published_date, archive_date, retry_count
+            FROM crawl_frontier
+            WHERE status = 'pending' OR (status = 'failed' AND retry_count < 3)
+        """
+        params: List[Any] = []
+        if portal:
+            query += " AND portal = ?"
+            params.append(portal)
+
+        query += " ORDER BY retry_count ASC, discovered_at ASC LIMIT ?"
+        params.append(limit)
+
+        with self._connection() as conn:
+            cur = conn.execute(query, params)
+            rows = [dict(r) for r in cur.fetchall()]
+            if rows:
+                urls = [r["url"] for r in rows]
+                chunk_size = 500
+                for i in range(0, len(urls), chunk_size):
+                    chunk = urls[i:i + chunk_size]
+                    placeholders = ",".join(["?"] * len(chunk))
+                    conn.execute(f"""
+                        UPDATE crawl_frontier
+                        SET status = 'in_progress'
+                        WHERE url IN ({placeholders});
+                    """, chunk)
+            return rows
+
     def mark_in_progress(self, urls: List[str]) -> None:
         """Marks batch as in_progress in SQLite-safe parameter chunks."""
         if not urls:
@@ -129,31 +171,66 @@ class CrawlFrontier:
                     WHERE url IN ({placeholders}) AND status = 'pending';
                 """, chunk)
 
-    def mark_completed(self, url: str) -> None:
-        """Marks article URL as completed with timestamp."""
+    def mark_completed(self, url: str, immediate: bool = False) -> None:
+        """Buffers article completion and flushes when reaching batch_size or immediate=True."""
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with self._connection() as conn:
-            conn.execute("""
-                UPDATE crawl_frontier
-                SET status = 'completed', fetched_at = ?, error_message = NULL
-                WHERE url = ?;
-            """, (now_iso, url))
+        with self._lock:
+            self._completed_buffer.append((now_iso, url))
+            if immediate or len(self._completed_buffer) >= self.batch_size:
+                self._flush_completed_locked()
 
-    def mark_failed(self, url: str, error: str = "") -> None:
-        """Increments retry_count and marks status as failed."""
+    def mark_failed(self, url: str, error: str = "", immediate: bool = False) -> None:
+        """Buffers article failure and flushes when reaching batch_size or immediate=True."""
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with self._connection() as conn:
-            conn.execute("""
-                UPDATE crawl_frontier
-                SET status = 'failed',
-                    retry_count = retry_count + 1,
-                    fetched_at = ?,
-                    error_message = ?
-                WHERE url = ?;
-            """, (now_iso, error[:500], url))
+        with self._lock:
+            self._failed_buffer.append((now_iso, str(error)[:500], url))
+            if immediate or len(self._failed_buffer) >= self.batch_size:
+                self._flush_failed_locked()
+
+    def flush(self) -> None:
+        """Flushes buffered completed and failed items to SQLite in one transaction."""
+        with self._lock:
+            self._flush_completed_locked()
+            self._flush_failed_locked()
+
+    def _flush_completed_locked(self) -> None:
+        if not self._completed_buffer:
+            return
+        to_write = self._completed_buffer[:]
+        self._completed_buffer.clear()
+        try:
+            with self._connection() as conn:
+                conn.executemany("""
+                    UPDATE crawl_frontier
+                    SET status = 'completed', fetched_at = ?, error_message = NULL
+                    WHERE url = ?;
+                """, to_write)
+        except Exception:
+            self._completed_buffer.extend(to_write)
+            raise
+
+    def _flush_failed_locked(self) -> None:
+        if not self._failed_buffer:
+            return
+        to_write = self._failed_buffer[:]
+        self._failed_buffer.clear()
+        try:
+            with self._connection() as conn:
+                conn.executemany("""
+                    UPDATE crawl_frontier
+                    SET status = 'failed',
+                        retry_count = retry_count + 1,
+                        fetched_at = ?,
+                        error_message = ?
+                    WHERE url = ?;
+                """, to_write)
+        except Exception:
+            self._failed_buffer.extend(to_write)
+            raise
 
     def reset_in_progress(self) -> int:
         """Resets stuck 'in_progress' items back to 'pending' on startup/resume."""
+        self.flush()
         with self._connection() as conn:
             cur = conn.execute("""
                 UPDATE crawl_frontier
@@ -163,7 +240,8 @@ class CrawlFrontier:
             return cur.rowcount
 
     def get_frontier_summary(self) -> Dict[str, Any]:
-        """Provides status breakdown per portal and aggregate totals."""
+        """Provides status breakdown per portal and aggregate totals (auto-flushes buffer first)."""
+        self.flush()
         with self._connection() as conn:
             cur = conn.execute("""
                 SELECT portal, status, COUNT(*) as cnt
@@ -189,3 +267,13 @@ class CrawlFrontier:
                 "totals": totals,
                 "portals": breakdown,
             }
+
+    def close(self) -> None:
+        """Flushes and closes frontier database session."""
+        self.flush()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()

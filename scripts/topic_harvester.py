@@ -7,8 +7,11 @@ curl_cffi TLS JA4 impersonation, Inertia.js unpacking, and SQLite WAL frontier.
 
 from __future__ import annotations
 import argparse
+import asyncio
 import json
 import logging
+import multiprocessing
+from multiprocessing import Process
 import os
 import sys
 import time
@@ -208,16 +211,132 @@ def discover_topic_articles(
     return total_discovered
 
 
+async def _async_crawl_worker_loop(
+    worker_id: int,
+    topic_id: str,
+    output_part_file: str,
+    db_path: str,
+    concurrency: int = 25,
+    limit_per_worker: int = 50000,
+):
+    """Event loop for one CPU core process, streaming requests via AsyncSession."""
+    curl_backend = CurlImpersonateBackend()
+    channel = PortalNewsChannel()
+    frontier = CrawlFrontier(db_path=db_path, batch_size=30)
+    sem = asyncio.Semaphore(concurrency)
+    session = curl_backend.create_async_session()
+    proxy_endpoint = default_http_client.get_active_proxy()
+    extracted_total = 0
+
+    part_path = Path(output_part_file)
+    part_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async def _process_single(item: Dict[str, Any], out_handle) -> None:
+        nonlocal extracted_total
+        raw_url = item["url"]
+        norm_url = normalize_portal_url(raw_url)
+        portal = item.get("portal", "unknown")
+
+        async with sem:
+            try:
+                # 1. Primary: async curl_cffi HTTP/2 session
+                if session is not None:
+                    status, html = await curl_backend.fetch_async(session, norm_url, proxy=proxy_endpoint)
+                    if status == 200 and html:
+                        clean_content = extract_clean_article_text(html)
+                        if clean_content and len(clean_content) >= 120:
+                            doc = {
+                                "url": norm_url,
+                                "title": item.get("title", ""),
+                                "content": clean_content,
+                                "topic": topic_id,
+                                "portal": portal,
+                                "publish_date": item.get("published_date", ""),
+                                "harvested_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                            out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                            frontier.mark_completed(norm_url)
+                            extracted_total += 1
+                            return
+
+                # 2. Secondary fallback: thread-offloaded channel extraction
+                res = await asyncio.to_thread(channel.extract, norm_url, {"disable_headless": True})
+                if res.get("status") == "success" and res.get("content"):
+                    doc = {
+                        "url": norm_url,
+                        "title": res.get("title", item.get("title", "")),
+                        "content": res.get("content", ""),
+                        "topic": topic_id,
+                        "portal": portal,
+                        "publish_date": item.get("published_date", ""),
+                        "harvested_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                    frontier.mark_completed(norm_url)
+                    extracted_total += 1
+                else:
+                    frontier.mark_failed(norm_url, error="Content length below threshold")
+            except Exception as e:
+                frontier.mark_failed(norm_url, error=str(e))
+
+    try:
+        with open(part_path, "a", encoding="utf-8") as out_f:
+            while extracted_total < limit_per_worker:
+                batch = frontier.claim_pending_batch(limit=concurrency * 2)
+                if not batch:
+                    break
+
+                tasks = [_process_single(item, out_f) for item in batch]
+                await asyncio.gather(*tasks)
+                out_f.flush()
+                frontier.flush()
+                logger.info(f"[Core-{worker_id}] Batch flushed | Extracted: {extracted_total} articles")
+    finally:
+        frontier.flush()
+        frontier.close()
+        if session is not None:
+            try:
+                await session.close()
+            except Exception:
+                pass
+
+
+def _worker_process_entrypoint(
+    worker_id: int,
+    topic_id: str,
+    output_part_file: str,
+    db_path: str,
+    concurrency: int = 25,
+    limit_per_worker: int = 50000,
+):
+    """Top-level process entrypoint for multiprocessing spawn."""
+    asyncio.run(
+        _async_crawl_worker_loop(
+            worker_id=worker_id,
+            topic_id=topic_id,
+            output_part_file=output_part_file,
+            db_path=db_path,
+            concurrency=concurrency,
+            limit_per_worker=limit_per_worker,
+        )
+    )
+
+
 def harvest_topic(
     topic_name: str,
     days: int = 365,
-    workers: int = 16,
+    cores: int = 2,
+    concurrency: int = 25,
+    workers: Optional[int] = None,
     limit: int = 100000,
     resume: bool = False,
     stats_only: bool = False,
     output_override: Optional[str] = None,
 ):
-    """Orchestrates topic discovery and concurrent extraction to JSONL."""
+    """
+    Orchestrates topic discovery and 2-Core Multi-Process Async extraction.
+    Pins work to exact CPU cores, eliminating OS context-switch latency.
+    """
     cfg = load_topic_config(topic_name)
     topic_id = cfg.topic.id
     output_file = output_override or str(cfg.get_output_path())
@@ -243,6 +362,7 @@ def harvest_topic(
         for portal, pstats in summary["portals"].items():
             print(f"  * {portal}: {pstats['total']} total ({pstats['completed']} done, {pstats['pending']} pending, {pstats['failed']} failed)")
         print("================================================")
+        frontier.close()
         return
 
     if not resume:
@@ -252,79 +372,62 @@ def harvest_topic(
     out_path = Path(output_file)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    channel = PortalNewsChannel()
-    curl_backend = CurlImpersonateBackend()
+    actual_cores = max(1, cores)
+    limit_per_core = max(1, limit // actual_cores)
+    logger.info(
+        f"[*] Starting 2-Core Async Harvester: {actual_cores} CPU cores x {concurrency} async sockets "
+        f"({actual_cores * concurrency} total concurrency) -> '{out_path}'"
+    )
 
-    logger.info(f"[*] Starting extraction with {workers} workers into '{out_path}'...")
-    processed_count = 0
+    if actual_cores == 1:
+        # Single core direct async run
+        asyncio.run(
+            _async_crawl_worker_loop(
+                worker_id=0,
+                topic_id=topic_id,
+                output_part_file=str(out_path),
+                db_path=db_path,
+                concurrency=concurrency,
+                limit_per_worker=limit,
+            )
+        )
+    else:
+        # Multi-process allocation across physical cores
+        processes: List[Process] = []
+        part_files: List[Path] = []
+        for i in range(actual_cores):
+            p_file = Path(f"{output_file}.part{i}")
+            part_files.append(p_file)
+            p = Process(
+                target=_worker_process_entrypoint,
+                args=(i, topic_id, str(p_file), db_path, concurrency, limit_per_core),
+            )
+            processes.append(p)
+            p.start()
 
-    def extract_task(item: Dict[str, Any]) -> Tuple[str, bool, Optional[Dict[str, Any]], str]:
-        raw_url = item["url"]
-        norm_url = normalize_portal_url(raw_url)
-        portal = item.get("portal", "unknown")
+        # Wait for worker processes to finish
+        for p in processes:
+            p.join()
 
-        try:
-            # 1. Primary: curl_cffi browser TLS impersonation
-            if curl_backend.is_available():
-                proxy_endpoint = default_http_client.get_active_proxy()
-                status, html = curl_backend.fetch(norm_url, proxy=proxy_endpoint)
-                if status == 200 and html:
-                    clean_content = extract_clean_article_text(html)
-                    if clean_content and len(clean_content) >= 120:
-                        doc = {
-                            "url": norm_url,
-                            "title": item.get("title", ""),
-                            "content": clean_content,
-                            "topic": topic_id,
-                            "portal": portal,
-                            "publish_date": item.get("published_date", ""),
-                            "harvested_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        return norm_url, True, doc, ""
+        # Merge partition files into primary output file
+        merged_count = 0
+        with open(out_path, "a", encoding="utf-8") as main_out:
+            for p_file in part_files:
+                if p_file.exists():
+                    with open(p_file, "r", encoding="utf-8") as pf:
+                        for line in pf:
+                            if line.strip():
+                                main_out.write(line)
+                                merged_count += 1
+                    try:
+                        p_file.unlink()
+                    except Exception:
+                        pass
+        logger.info(f"[+] Consolidated {merged_count} articles across {actual_cores} cores into '{out_path.name}'")
 
-            # 2. Secondary fallback: portal_news channel pipeline (Inertia.js + Trafilatura)
-            res = channel.extract(norm_url, config={"disable_headless": True})
-            if res.get("status") == "success" and res.get("content"):
-                doc = {
-                    "url": norm_url,
-                    "title": res.get("title", item.get("title", "")),
-                    "content": res.get("content", ""),
-                    "topic": topic_id,
-                    "portal": portal,
-                    "publish_date": item.get("published_date", ""),
-                    "harvested_at": datetime.now(timezone.utc).isoformat(),
-                }
-                return norm_url, True, doc, ""
-
-            return norm_url, False, None, "Content length below threshold"
-        except Exception as e:
-            return norm_url, False, None, str(e)
-
-    with open(out_path, "a", encoding="utf-8") as out_f:
-        while processed_count < limit:
-            batch = frontier.get_pending_batch(limit=min(workers * 4, 100))
-            if not batch:
-                logger.info("[*] Frontier queue empty. Topic harvest completed.")
-                break
-
-            batch_urls = [item["url"] for item in batch]
-            frontier.mark_in_progress(batch_urls)
-
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = [executor.submit(extract_task, item) for item in batch]
-                for fut in as_completed(futures):
-                    norm_url, success, doc, err = fut.result()
-                    if success and doc:
-                        out_f.write(json.dumps(doc, ensure_ascii=False) + "\n")
-                        out_f.flush()
-                        frontier.mark_completed(norm_url)
-                        processed_count += 1
-                        if processed_count % 25 == 0:
-                            logger.info(f"[+] Harvested {processed_count} articles -> {out_path.name}")
-                    else:
-                        frontier.mark_failed(norm_url, error=err)
-
-    logger.info(f"[*] Topic '{topic_id}' harvest session finished. Total extracted: {processed_count}")
+    frontier.flush()
+    frontier.close()
+    logger.info(f"[*] Topic '{topic_id}' harvest session finished.")
 
 
 def export_topic_dataset(

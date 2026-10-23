@@ -97,6 +97,49 @@ class TestCrawlFrontier(unittest.TestCase):
         self.assertEqual(len(batch), 1)
         self.assertEqual(batch[0]["url"], "https://sport.detik.com/sepakbola/resume_test")
 
+    def test_claim_pending_batch_atomic(self):
+        """Verifies multi-core worker atomic claiming without URL race condition."""
+        candidates = [
+            {"url": "https://sport.detik.com/core/1", "title": "1"},
+            {"url": "https://sport.detik.com/core/2", "title": "2"},
+            {"url": "https://sport.detik.com/core/3", "title": "3"},
+        ]
+        self.frontier.add_candidates(candidates, portal="detik")
+
+        # Core-0 claims 2 items
+        core0_batch = self.frontier.claim_pending_batch(limit=2)
+        self.assertEqual(len(core0_batch), 2)
+        core0_urls = {item["url"] for item in core0_batch}
+
+        # Core-1 claims remaining items -> receives only the 3rd item
+        core1_batch = self.frontier.claim_pending_batch(limit=2)
+        self.assertEqual(len(core1_batch), 1)
+        core1_urls = {item["url"] for item in core1_batch}
+
+        # Zero intersection between core allocations
+        self.assertEqual(len(core0_urls.intersection(core1_urls)), 0)
+        self.assertIn("https://sport.detik.com/core/3", core1_urls)
+
+    def test_batch_commit_buffering_and_flush(self):
+        """Verifies in-memory buffer delays write until batch limit or explicit flush."""
+        candidates = [{"url": f"https://sport.detik.com/buf/{i}", "title": str(i)} for i in range(10)]
+        self.frontier.add_candidates(candidates, portal="detik")
+        self.frontier.claim_pending_batch(limit=10)
+
+        # Mark 5 completed (below batch_size=50)
+        for i in range(5):
+            self.frontier.mark_completed(f"https://sport.detik.com/buf/{i}")
+
+        # Items should be buffered in memory
+        self.assertEqual(len(self.frontier._completed_buffer), 5)
+
+        # Explicit flush writes to DB and clears buffer
+        self.frontier.flush()
+        self.assertEqual(len(self.frontier._completed_buffer), 0)
+
+        summary = self.frontier.get_frontier_summary()
+        self.assertEqual(summary["totals"]["completed"], 5)
+
 
 class TestArchiveIndexParser(unittest.TestCase):
     """Verifies date archive HTML index parsing across major Indonesian portals."""

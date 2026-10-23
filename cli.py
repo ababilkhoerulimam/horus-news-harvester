@@ -116,7 +116,9 @@ def main():
     t_harv = topic_subparsers.add_parser("harvest", help="Run discovery and extraction for topic")
     t_harv.add_argument("--topic", "-t", required=True, help="Topic ID (e.g. karhutla)")
     t_harv.add_argument("--days", "-d", type=int, default=365, help="Past days to crawl (default: 365)")
-    t_harv.add_argument("--workers", "-w", type=int, default=16, help="Worker threads (default: 16)")
+    t_harv.add_argument("--cores", "-c", type=int, default=2, help="CPU cores allocated (default: 2)")
+    t_harv.add_argument("--concurrency", type=int, default=25, help="Concurrent async sockets per core (default: 25)")
+    t_harv.add_argument("--workers", "-w", type=int, default=16, help="Worker threads/alias (default: 16)")
     t_harv.add_argument("--limit", "-l", type=int, default=100000, help="Article harvest limit")
     t_harv.add_argument("--resume", "-r", action="store_true", help="Resume pending frontier queue")
     t_harv.add_argument("--stats", action="store_true", help="Display topic frontier stats")
@@ -375,6 +377,8 @@ def main():
             harvest_topic(
                 topic_name=args.topic,
                 days=args.days,
+                cores=args.cores,
+                concurrency=args.concurrency,
                 workers=args.workers,
                 limit=args.limit,
                 resume=args.resume,
