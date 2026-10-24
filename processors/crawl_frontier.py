@@ -6,6 +6,7 @@ and error states with WAL-mode concurrency for interrupted/crash-proof runs.
 
 import sqlite3
 import threading
+from collections import defaultdict, deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -277,3 +278,32 @@ class CrawlFrontier:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+
+def interleave_by_portal(items: List[Dict[str, Any]], key: str = "portal") -> List[Dict[str, Any]]:
+    """
+    Round-robin interleaves candidate items by portal/domain.
+    Spreads concurrent traffic evenly across target hosts, avoiding single-origin bottleneck.
+    O(N) runtime and O(N) memory.
+    """
+    if not items:
+        return []
+
+    groups: Dict[str, deque] = defaultdict(deque)
+    for item in items:
+        portal_val = item.get(key) or "unknown"
+        groups[portal_val].append(item)
+
+    interleaved: List[Dict[str, Any]] = []
+    active_keys = list(groups.keys())
+    while active_keys:
+        next_active = []
+        for p in active_keys:
+            d = groups[p]
+            if d:
+                interleaved.append(d.popleft())
+            if d:
+                next_active.append(p)
+        active_keys = next_active
+
+    return interleaved

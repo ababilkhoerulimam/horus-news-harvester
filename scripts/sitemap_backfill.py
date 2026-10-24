@@ -34,7 +34,7 @@ from channels.portal_news import (
 )
 from processors.ad_filter import is_ad_domain
 from processors.cleaner import clean_news_text, normalize_timestamp
-from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB
+from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB, interleave_by_portal
 from processors.http_client import default_http_client
 
 logger = logging.getLogger("sitemap_backfill")
@@ -820,6 +820,10 @@ def run_sitemap_backfill(
             "frontier_summary": summary,
             "output_file": str(out_path),
         }
+
+    # Interleave batch across portals for balanced origin load and maximum throughput
+    if not portal_filter:
+        batch = interleave_by_portal(batch)
 
     urls_to_process = [item["url"] for item in batch]
     frontier.mark_in_progress(urls_to_process)

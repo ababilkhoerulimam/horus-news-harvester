@@ -9,7 +9,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from processors.crawl_frontier import CrawlFrontier
+from processors.crawl_frontier import CrawlFrontier, interleave_by_portal
 from processors.http_client import ResilientHttpClient
 from scripts.sitemap_backfill import parse_archive_index_html
 
@@ -228,6 +228,29 @@ class TestHttpClientAdaptiveBackoff(unittest.TestCase):
             self.assertEqual(body, b"<html>OK</html>")
             self.assertEqual(mock_urlopen.call_count, 2)
             self.assertTrue(mock_sleep.called)
+
+
+class TestInterleaveByPortal(unittest.TestCase):
+    """Verifies round-robin interleaving across portal domains."""
+
+    def test_interleave_basic(self):
+        items = [
+            {"url": "a1", "portal": "detik"},
+            {"url": "a2", "portal": "detik"},
+            {"url": "a3", "portal": "detik"},
+            {"url": "b1", "portal": "kompas"},
+            {"url": "b2", "portal": "kompas"},
+            {"url": "c1", "portal": "viva"},
+        ]
+        res = interleave_by_portal(items)
+        expected_urls = ["a1", "b1", "c1", "a2", "b2", "a3"]
+        actual_urls = [x["url"] for x in res]
+        self.assertEqual(actual_urls, expected_urls)
+
+    def test_interleave_empty_and_single(self):
+        self.assertEqual(interleave_by_portal([]), [])
+        single = [{"url": "x1", "portal": "p1"}, {"url": "x2", "portal": "p1"}]
+        self.assertEqual(interleave_by_portal(single), single)
 
 
 if __name__ == "__main__":

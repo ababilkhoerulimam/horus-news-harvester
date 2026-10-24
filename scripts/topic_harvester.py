@@ -35,7 +35,7 @@ from channels.portal_news import (
     is_cloudflare_challenge,
 )
 from processors.cleaner import clean_news_text
-from processors.crawl_frontier import CrawlFrontier
+from processors.crawl_frontier import CrawlFrontier, interleave_by_portal
 from processors.http_client import default_http_client, DEFAULT_PROXIES_FILE
 from processors.topic_config import TopicConfig, load_topic_config
 from processors.portal_catalog import resolve_topic_portals, ResolvedPortal, CATALOG_PRESETS
@@ -321,6 +321,8 @@ async def _async_crawl_worker_loop(
                 batch = frontier.claim_pending_batch(limit=concurrency * 4)
                 if not batch:
                     break
+
+                batch = interleave_by_portal(batch)
 
                 queue: asyncio.Queue = asyncio.Queue()
                 for item in batch:
