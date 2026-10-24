@@ -28,7 +28,12 @@ if str(REPO_ROOT) not in sys.path:
 import yaml
 
 from backends.curl_impersonate import CurlImpersonateBackend
-from channels.portal_news import PortalNewsChannel, normalize_portal_url, extract_clean_article_text
+from channels.portal_news import (
+    PortalNewsChannel,
+    normalize_portal_url,
+    extract_clean_article_text,
+    is_cloudflare_challenge,
+)
 from processors.cleaner import clean_news_text
 from processors.crawl_frontier import CrawlFrontier
 from processors.http_client import default_http_client, DEFAULT_PROXIES_FILE
@@ -219,17 +224,18 @@ async def _async_crawl_worker_loop(
     concurrency: int = 25,
     limit_per_worker: int = 50000,
 ):
-    """Event loop for one CPU core process, streaming requests via AsyncSession."""
+    """Event loop for one CPU core process, streaming requests via AsyncQueue (direct-first)."""
     curl_backend = CurlImpersonateBackend()
     channel = PortalNewsChannel()
-    frontier = CrawlFrontier(db_path=db_path, batch_size=30)
-    sem = asyncio.Semaphore(concurrency)
+    frontier = CrawlFrontier(db_path=db_path, batch_size=50)
     session = curl_backend.create_async_session()
-    proxy_endpoint = default_http_client.get_active_proxy()
     extracted_total = 0
 
     part_path = Path(output_part_file)
     part_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_lock = asyncio.Lock()
+    db_lock = asyncio.Lock()
 
     async def _process_single(item: Dict[str, Any], out_handle) -> None:
         nonlocal extracted_total
@@ -237,60 +243,103 @@ async def _async_crawl_worker_loop(
         norm_url = normalize_portal_url(raw_url)
         portal = item.get("portal", "unknown")
 
-        async with sem:
-            try:
-                # 1. Primary: async curl_cffi HTTP/2 session
-                if session is not None:
-                    status, html = await curl_backend.fetch_async(session, norm_url, proxy=proxy_endpoint)
-                    if status == 200 and html:
-                        clean_content = extract_clean_article_text(html)
-                        if clean_content and len(clean_content) >= 120:
-                            doc = {
-                                "url": norm_url,
-                                "title": item.get("title", ""),
-                                "content": clean_content,
-                                "topic": topic_id,
-                                "portal": portal,
-                                "publish_date": item.get("published_date", ""),
-                                "harvested_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                            out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
-                            frontier.mark_completed(norm_url)
-                            extracted_total += 1
-                            return
+        try:
+            # 1. Primary: Direct fetch (fast, ~0.15s)
+            if session is not None:
+                status, html = await curl_backend.fetch_async(session, norm_url, proxy=None)
 
-                # 2. Secondary fallback: thread-offloaded channel extraction
-                res = await asyncio.to_thread(channel.extract, norm_url, {"disable_headless": True})
-                if res.get("status") == "success" and res.get("content"):
-                    doc = {
-                        "url": norm_url,
-                        "title": res.get("title", item.get("title", "")),
-                        "content": res.get("content", ""),
-                        "topic": topic_id,
-                        "portal": portal,
-                        "publish_date": item.get("published_date", ""),
-                        "harvested_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                # Fallback to rotating proxy if WAF/blocked/challenge
+                if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
+                    proxy = default_http_client.get_active_proxy()
+                    if proxy:
+                        status, html = await curl_backend.fetch_async(session, norm_url, proxy=proxy)
+
+                if status == 200 and html and not is_cloudflare_challenge(status, html):
+                    clean_content = extract_clean_article_text(html)
+                    if clean_content and len(clean_content) >= 120:
+                        doc = {
+                            "url": norm_url,
+                            "title": item.get("title", ""),
+                            "content": clean_content,
+                            "topic": topic_id,
+                            "portal": portal,
+                            "publish_date": item.get("published_date", ""),
+                            "harvested_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        async with file_lock:
+                            out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
+                            extracted_total += 1
+                            curr = extracted_total
+
+                        async with db_lock:
+                            frontier.mark_completed(norm_url)
+
+                        if curr % 50 == 0:
+                            async with file_lock:
+                                out_handle.flush()
+                            async with db_lock:
+                                frontier.flush()
+                            logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
+                        return
+
+            # 2. Secondary fallback: thread-offloaded channel extraction
+            res = await asyncio.to_thread(channel.extract, norm_url, {"disable_headless": True})
+            if res.get("status") == "success" and res.get("content"):
+                doc = {
+                    "url": norm_url,
+                    "title": res.get("title", item.get("title", "")),
+                    "content": res.get("content", ""),
+                    "topic": topic_id,
+                    "portal": portal,
+                    "publish_date": item.get("published_date", ""),
+                    "harvested_at": datetime.now(timezone.utc).isoformat(),
+                }
+                async with file_lock:
                     out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
-                    frontier.mark_completed(norm_url)
                     extracted_total += 1
-                else:
+                    curr = extracted_total
+
+                async with db_lock:
+                    frontier.mark_completed(norm_url)
+
+                if curr % 50 == 0:
+                    async with file_lock:
+                        out_handle.flush()
+                    async with db_lock:
+                        frontier.flush()
+                    logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
+            else:
+                async with db_lock:
                     frontier.mark_failed(norm_url, error="Content length below threshold")
-            except Exception as e:
+        except Exception as e:
+            async with db_lock:
                 frontier.mark_failed(norm_url, error=str(e))
 
     try:
         with open(part_path, "a", encoding="utf-8") as out_f:
             while extracted_total < limit_per_worker:
-                batch = frontier.claim_pending_batch(limit=concurrency * 2)
+                batch = frontier.claim_pending_batch(limit=concurrency * 4)
                 if not batch:
                     break
 
-                tasks = [_process_single(item, out_f) for item in batch]
-                await asyncio.gather(*tasks)
+                queue: asyncio.Queue = asyncio.Queue()
+                for item in batch:
+                    queue.put_nowait(item)
+
+                async def _worker():
+                    while not queue.empty():
+                        try:
+                            item = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        await _process_single(item, out_f)
+                        queue.task_done()
+
+                worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+                await asyncio.gather(*worker_tasks)
                 out_f.flush()
                 frontier.flush()
-                logger.info(f"[Core-{worker_id}] Batch flushed | Extracted: {extracted_total} articles")
+                logger.info(f"[Core-{worker_id}] Batch completed | Extracted: {extracted_total} articles")
     finally:
         frontier.flush()
         frontier.close()
