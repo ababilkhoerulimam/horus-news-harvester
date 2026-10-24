@@ -729,6 +729,12 @@ async def _async_backfill_worker_loop(
             # 1. Primary: Direct fetch (fast, ~0.15s)
             status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
 
+            # Fast-fail on HTTP 404: page deleted or non-existent on origin
+            if status == 404:
+                async with db_lock:
+                    frontier.mark_failed(u, error="HTTP 404 Not Found")
+                return
+
             # Fallback to rotating proxy if WAF/blocked/challenge
             if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
                 proxy = default_http_client.get_active_proxy()
@@ -1064,6 +1070,12 @@ def run_sitemap_backfill(
                         try:
                             # 1. Primary: Direct fetch (fast, ~0.15s)
                             status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
+
+                            # Fast-fail on HTTP 404: page deleted or non-existent on origin
+                            if status == 404:
+                                async with db_lock:
+                                    frontier.mark_failed(u, error="HTTP 404 Not Found")
+                                return
 
                             # Check if Cloudflare / rate limited / blocked -> Fallback to rotating proxy
                             if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
