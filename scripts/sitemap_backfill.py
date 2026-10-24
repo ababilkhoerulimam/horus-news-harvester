@@ -71,19 +71,22 @@ DEFAULT_FOOTBALL_KEYWORDS = [
     "rafael struick", "ragnar oratmangoen", "nathan tjoe-a-on", "nathan", "calvin verdonk", "verdonk",
     "rizky ridho", "asnawi mangkualam", "asnawi", "pratama arhan", "arhan", "justin hubner",
     "sandy walsh", "jordi amat", "ivar jenner", "shayne pattynama", "eliano reijnders",
-    "mees hilgers", "ernando ari", "nadeo argawinata", "dimas drajad", "hokky caraka",
+    "mees hilgers", "kevin diks", "jens raven", "ole romeny", "mauro zijlstra",
+    "ernando ari", "nadeo argawinata", "dimas drajad", "hokky caraka",
+    "arkhan fikri", "kadek arel", "dony tri pamungkas", "iqbal gwijangge",
     "egy maulana vikri", "egy maulana", "witan sulaeman", "ricky kambuaya", "marc klok",
     "yakob sayuri", "yance sayuri", "wahyu prasetyo", "malik risaldi", "ramadhan sananta",
     "beckham putra", "david da silva", "ciro alves", "gustavo almeida", "alex martins",
+    "tyronne del pino", "ryo matsumura", "maciej gajos", "marko simic", "kenzo nambu",
 
     # 7. Indonesian Liga 1 Clubs & Fan Monikers
-    "persib", "maung bandung", "pangeran biru",
-    "persija", "macan kemayoran", "the jakmania", "jakmania",
+    "persib", "maung bandung", "pangeran biru", "bobotoh", "viking persib",
+    "persija", "macan kemayoran", "the jakmania", "jakmania", "the jak",
     "persebaya", "bajul ijo", "bonek",
     "arema", "singo edan", "aremania",
-    "bali united", "bali-united", "serdadu tridatu",
-    "psm makassar", "psm-makassar", "jukueja",
-    "borneo fc", "borneo-fc", "pesut etam",
+    "bali united", "bali-united", "serdadu tridatu", "semeton dewata",
+    "psm makassar", "psm-makassar", "jukueja", "maczman",
+    "borneo fc", "borneo-fc", "pesut etam", "pusamania",
     "dewa united", "dewa-united", "banten warrior",
     "madura united", "madura-united", "laskar sape kerrab",
     "psis semarang", "psis-semarang", "laskar mahesa jenar", "panser biru", "snex",
@@ -91,35 +94,48 @@ DEFAULT_FOOTBALL_KEYWORDS = [
     "persik kediri", "persik-kediri", "macan putih",
     "persita tangerang", "persita", "pendekar cisadane",
     "barito putera", "barito-putera", "laskar antasari",
-    "pss sleman", "pss-sleman", "super elang jawa", "super elja", "bcs x pss", "slemania",
+    "pss sleman", "pss-sleman", "super elang jawa", "super elja", "bcs x pss", "slemania", "brigata curva sud",
     "malut united", "malut-united", "laskar kie raha",
     "semen padang", "semen-padang", "kabau sirah",
     "psbs biak", "psbs-biak", "badai pasifik",
 
-    # 8. Indonesian Liga 2 Heritage Clubs
-    "sriwijaya fc", "sriwijaya-fc", "laskar wong kito",
-    "psms medan", "psms-medan", "ayam kinantan",
+    # 8. Indonesian Liga 2 Heritage Clubs & Local Contenders
+    "sriwijaya fc", "sriwijaya-fc", "laskar wong kito", "singamania",
+    "psms medan", "psms-medan", "ayam kinantan", "smeck hooligan",
     "persipura jayapura", "persipura", "mutiara hitam",
     "persela lamongan", "persela", "laskar joko tingkir",
-    "deltras", "gresik united", "persijap jepara", "persijap", "persiraja",
+    "psim yogyakarta", "psim", "persiba balikpapan", "persiba",
+    "persikota", "persijap jepara", "persijap", "persiraja",
+    "deltras", "gresik united", "adhyaksa fc", "dejan fc", "bekasi city",
 
-    # 9. Asian & ASEAN Regional Tournaments
+    # 9. Stadiums & Major Football Venues
+    "stadion gbk", "gelora bung karno", "jakarta international stadium", "jis",
+    "gelora bung tomo", "gbt", "si jalak harupat", "gbla", "stadion manahan",
+    "maguwoharjo", "jatidiri", "stadion batakan", "kapten i wayan dipta", "patriot candrabhaga",
+
+    # 10. Asian & ASEAN Regional Tournaments
     "piala asia", "asian cup", "piala-asia", "afc", "kualifikasi piala asia",
     "piala aff", "piala-aff", "aff cup", "asean cup", "asean championship",
     "afc champions league", "acl two", "piala afc", "sea games",
 
-    # 10. World Cup & Global Tournaments
+    # 11. World Cup & Global Tournaments
     "piala dunia", "world cup", "world-cup", "piala-dunia", "fifa",
     "kualifikasi piala dunia", "kualifikasi-piala-dunia", "fifa matchday", "fifa match day",
 
-    # 11. Foreign Leagues Heavily Covered in Indo Desks
+    # 12. Domestic Football Rules, Transfers & Match Terminology
+    "bursa transfer", "transfer window", "degradasi", "promosi liga",
+    "kartu merah", "kartu kuning", "clean sheet", "hattrick", "adu penalti",
+    "perpanjangan waktu", "video assistant referee", "championship series", "regular series",
+    "peringkat fifa", "ranking fifa", "ultras garuda", "la grande indonesia",
+
+    # 13. Foreign Leagues Heavily Covered in Indo Desks
     "champions league", "champions-league", "liga champions", "liga-champions", "uefa",
     "premier league", "premier-league", "liga inggris", "liga-inggris",
     "la liga", "la-liga", "liga spanyol", "liga-spanyol",
     "serie a", "serie-a", "liga italia", "liga-italia",
     "bundesliga", "ligue 1", "ligue-1", "eredivisie", "saudi pro league",
 
-    # 12. Top Global Clubs Covered by Indo Portals
+    # 14. Top Global Clubs Covered by Indo Portals
     "real madrid", "barcelona", "manchester united", "manchester city",
     "liverpool", "arsenal", "chelsea", "tottenham", "juventus",
     "ac milan", "inter milan", "bayern munchen", "bayern munich", "psg",
@@ -131,24 +147,29 @@ def _matches_keywords(url_lower: str, title_lower: str, keywords: List[str]) -> 
     """
     Checks if an article URL or headline matches any football keyword.
     Tolerates differences between hyphens, underscores, and spaces.
+    Uses word boundaries for short acronyms (<= 4 chars) to eliminate false positives.
     """
     if not keywords:
         return True
-    url_spaced = url_lower.replace("-", " ").replace("_", " ").replace("/", " ")
+    url_spaced = " " + url_lower.replace("-", " ").replace("_", " ").replace("/", " ") + " "
+    title_spaced = " " + title_lower.replace("-", " ").replace("_", " ") + " " if title_lower else ""
+
     for kw in keywords:
         kw_lower = kw.lower()
-        if kw_lower in url_lower:
-            return True
-        if title_lower and kw_lower in title_lower:
-            return True
-        kw_spaced = kw_lower.replace("-", " ").replace("_", " ")
-        if kw_spaced in url_spaced:
-            return True
-        if title_lower and kw_spaced in title_lower:
-            return True
-        kw_hyphen = kw_lower.replace(" ", "-")
-        if kw_hyphen in url_lower:
-            return True
+        if len(kw_lower) <= 4:
+            # Word boundary check for short acronyms (e.g. 'sty', 'var', 'jis', 'gbk')
+            pat = r"(?:\b|_)" + re.escape(kw_lower) + r"(?:\b|_)"
+            if re.search(pat, url_spaced) or (title_spaced and re.search(pat, title_spaced)):
+                return True
+        else:
+            if kw_lower in url_lower or (title_lower and kw_lower in title_lower):
+                return True
+            kw_spaced = kw_lower.replace("-", " ").replace("_", " ")
+            if kw_spaced in url_spaced or (title_spaced and kw_spaced in title_spaced):
+                return True
+            kw_hyphen = kw_lower.replace(" ", "-")
+            if kw_hyphen in url_lower:
+                return True
     return False
 
 # Known XML Sitemaps of Indonesian news portals
