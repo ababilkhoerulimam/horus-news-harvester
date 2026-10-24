@@ -1,0 +1,63 @@
+# ==============================================================================
+# Topic Configuration: Indonesian Sports Intelligence (NNIH)
+# Unifies Football, Basketball, Badminton, and Volleyball into declarative NNIH
+# ==============================================================================
+
+topic:
+  id: "sports"
+  name: "Indonesian National Sports & Athletes"
+  description: "Monitoring Liga 1, Timnas Indonesia, IBL, PBSI bulu tangkis, dan Proliga voli"
+  default_output: "data/raw/news/sports.jsonl"
+  default_dapt_output: "data/processed/nusabert_sports_dapt.txt"
+
+keywords:
+  football:
+    - "liga 1 indonesia"
+    - "timnas indonesia"
+    - "pssi"
+    - "shin tae-yong"
+    - "kualifikasi piala dunia"
+    - "persib bandung"
+    - "persija jakarta"
+    - "persebaya surabaya"
+    - "arema fc"
+    - "bali united"
+    - "psm makassar"
+    - "borneo fc"
+    - "dewa united fc"
+
+  basketball:
+    - "ibl"
+    - "indonesian basketball league"
+    - "timnas basket indonesia"
+    - "perbasi"
+    - "satria muda"
+    - "pelita jaya"
+    - "prawira bandung"
+
+  badminton:
+    - "pbsi"
+    - "bwf world tour"
+    - "indonesia open"
+    - "all england"
+    - "jonatan christie"
+    - "anthony ginting"
+    - "fajar alfian"
+    - "muhammad rian ardianto"
+
+  volleyball:
+    - "proliga"
+    - "timnas voli indonesia"
+    - "pbvsi"
+    - "rivan nurmulki"
+
+portals:
+  presets:
+    - "national_wire"
+    - "regional_epicenters"
+  include: []
+  exclude: []
+
+output:
+  format: "jsonl"
+  min_word_count: 50

@@ -31,7 +31,6 @@ from processors.ad_filter import is_ad_domain
 from processors.cleaner import clean_news_text, normalize_timestamp
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB
 from processors.http_client import default_http_client
-from scripts.local_harvester import _load_existing_ids
 
 logger = logging.getLogger("sitemap_backfill")
 

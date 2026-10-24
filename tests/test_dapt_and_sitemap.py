@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from channels.portal_news import extract_clean_article_text
 from doctor import check_packages
-from scripts.prepare_dapt_corpus import (
+from processors.dapt import (
     build_dapt_corpus,
     format_corpus_summary,
     sanitize_dapt_text,

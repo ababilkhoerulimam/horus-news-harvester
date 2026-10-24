@@ -26,7 +26,6 @@ from backends.headless_browser import HeadlessBrowserBackend, is_spa_skeleton
 from processors.cleaner import clean_news_text, deduplicate_articles
 from processors.state_store import StateStore
 from processors.http_client import ResilientHttpClient, DEFAULT_USER_AGENTS, default_http_client
-from scripts.scheduler import HarvestScheduler
 
 
 class TestSportsChannels(unittest.TestCase):
@@ -188,25 +187,6 @@ class TestSportsChannels(unittest.TestCase):
             stats = store.get_stats()
             self.assertEqual(stats["total_items"], 2)
             self.assertEqual(stats["by_channel"].get("portal_news"), 2)
-        finally:
-            if os.path.exists(temp_db):
-                os.remove(temp_db)
-
-    def test_scheduler_cycle_logic(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-            temp_db = tf.name
-
-        try:
-            scheduler = HarvestScheduler(
-                state_db_path=temp_db,
-                news_interval_sec=1000,
-                twitter_interval_sec=1000,
-                youtube_interval_sec=1000
-            )
-            # Both due initially (since last_run is 0)
-            now = 2000.0
-            due_news = (now - scheduler.last_runs["news"]) >= scheduler.news_interval_sec
-            self.assertTrue(due_news)
         finally:
             if os.path.exists(temp_db):
                 os.remove(temp_db)

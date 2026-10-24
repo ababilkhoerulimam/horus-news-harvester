@@ -166,26 +166,28 @@ national-news-intelligence-harvester/
 │   ├── crawl_frontier.py   Persistent SQLite queue with URL hashing & retry logic
 │   └── cleaner.py          NLP sanitization, zero-width stripper & ad filter
 ├── scripts/
-│   ├── topic_harvester.py  Topic harvesting and export engine
-│   ├── sitemap_backfill.py Historical XML sitemap and WP-REST crawler
-│   └── local_harvester.py  Legacy sports-specific multi-channel runner
+│   ├── topic_harvester.py  2-Core Multi-Process Async harvesting engine
+│   ├── sitemap_backfill.py Historical XML sitemap and WP-REST helper
+│   ├── fingerprint_portals.py Fingerprint generator for 66 media outlets
+│   └── discover_catalog_portals.py Automated portal endpoint scanner
 ├── tests/                  Unit test suites (test_topic_engine.py, test_channels.py)
 ├── cli.py                  Unified CLI command gateway (nnih)
+├── CLAUDE.md               Strict developer & agent guidance for NNIH
 └── pyproject.toml          PEP 621 open-source package metadata
 ```
 
 ---
 
-## Legacy Sports Multi-Channel Harvester
+## Sports Intelligence Topic
 
-The original sports intelligence subsystem remains fully operational:
+Indonesian sports (football, basketball, badminton, volleyball) is a native declarative topic:
 
 ```bash
-# Search articles across sports taxonomy
-python cli.py search --query "Timnas Indonesia" --sport football --limit 5
+# Run 2-Core Async Harvester for sports
+nnih topic harvest --topic sports --cores 2 --concurrency 25
 
-# Run sports batch harvester across portals, Twitter/X, and YouTube
-python scripts/local_harvester.py
+# Export sports corpus for NLP
+nnih topic dapt --topic sports --min-words 50
 ```
 
 ---

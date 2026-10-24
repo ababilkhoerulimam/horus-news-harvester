@@ -15,8 +15,7 @@ from unittest.mock import MagicMock, patch
 from backends.firefox_cookies import extract_firefox_twitter_tokens, find_firefox_profiles
 from channels.social_youtube import YouTubeChannel
 from processors.backup import create_backup_archive, run_backup
-from processors.cleaner import deduplicate_jsonl_file, normalize_timestamp
-from scripts.local_harvester import _load_existing_ids
+from processors.cleaner import deduplicate_jsonl_file, normalize_timestamp, _load_existing_ids
 
 
 class TestSixArchitecturePatches(unittest.TestCase):

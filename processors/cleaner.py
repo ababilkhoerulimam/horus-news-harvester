@@ -5,7 +5,7 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 
 
 AD_PATTERNS = [
@@ -247,3 +247,27 @@ def deduplicate_jsonl_file(file_path: Path, id_key: str = "url") -> int:
         tmp_path.replace(fpath)
 
     return duplicates_removed
+
+
+def load_existing_ids(file_path: Path, id_key: str = "url") -> Set[str]:
+    """Reads existing item IDs from a JSONL file to prevent duplicate disk appends."""
+    fpath = Path(file_path)
+    if not fpath.exists() or not fpath.is_file():
+        return set()
+    existing: Set[str] = set()
+    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                obj = json.loads(stripped)
+                val = obj.get(id_key) or obj.get("url") or obj.get("tweet_id") or obj.get("video_id")
+                if val:
+                    existing.add(str(val))
+            except Exception:
+                continue
+    return existing
+
+
+_load_existing_ids = load_existing_ids

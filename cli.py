@@ -210,16 +210,14 @@ def main():
                 if loaded_cnt:
                     print(f"[*] Auto-loaded {loaded_cnt} rotating proxies from '{DEFAULT_PROXIES_FILE}'")
 
-        from scripts.local_harvester import run_local_harvest
-        res = run_local_harvest(
-            items_per_keyword=args.limit,
-            harvest_news=not args.no_news,
-            harvest_youtube=not args.no_youtube,
-            harvest_twitter=not args.no_twitter,
-            incremental=True,
-            max_workers=args.workers
+        from scripts.topic_harvester import harvest_topic
+        print("[*] Notice: Legacy 'harvest' redirected to NNIH 2-Core Async Engine for topic 'sports'.")
+        harvest_topic(
+            topic_name="sports",
+            limit=args.limit * 50,
+            cores=2,
+            concurrency=25,
         )
-        print(f"[+] Harvest cycle finished with status: {res.get('status')}")
 
     elif args.command == "export":
         from processors.exporter import run_export
@@ -319,19 +317,14 @@ def main():
                 sys.exit(1)
 
     elif args.command == "dapt-corpus":
-        from scripts.prepare_dapt_corpus import build_dapt_corpus, format_corpus_summary
-        print(f"[*] Preparing DAPT sports corpus for NusaBERT from '{args.input}'...")
-        res = build_dapt_corpus(
-            input_path=args.input,
-            output_path=args.output,
+        from scripts.topic_harvester import generate_topic_dapt_corpus
+        print("[*] Notice: Legacy 'dapt-corpus' redirected to NNIH DAPT engine for topic 'sports'.")
+        res = generate_topic_dapt_corpus(
+            topic_name="sports",
             min_words=args.min_words,
-            doc_format=args.format
+            out_path=args.output
         )
-        if res.get("status") == "success":
-            print(format_corpus_summary(res))
-        else:
-            print(f"[!] Corpus preparation failed: {res.get('message')}")
-            sys.exit(1)
+        print(json.dumps(res, indent=2))
 
     elif args.command == "topic":
         from scripts.topic_harvester import (
