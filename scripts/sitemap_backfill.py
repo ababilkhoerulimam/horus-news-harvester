@@ -832,7 +832,8 @@ def run_sitemap_backfill(
     curl_backend = CurlImpersonateBackend()
 
     if curl_backend.is_available():
-        concurrency = min(max_workers if max_workers > 0 else 30, 60)
+        # On Windows, keep socket concurrency within OS loopback limits (max 40) to prevent WinError 10054
+        concurrency = min(max_workers if max_workers > 0 else 35, 40)
         logger.info(f"Processing batch of {len(batch)} candidate articles via AsyncQueue (concurrency: {concurrency}, direct-first)")
 
         async def _async_backfill_runner():
