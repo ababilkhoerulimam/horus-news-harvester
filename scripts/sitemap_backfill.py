@@ -375,10 +375,25 @@ def fetch_sitemap_urls(
         visited_sitemaps.add(current_url)
 
         try:
-            status, body_bytes, _ = default_http_client.fetch(current_url, timeout=15)
-            if status != 200 or not body_bytes:
-                continue
-            xml_text = _decompress_sitemap_bytes(body_bytes)
+            curl_b = CurlImpersonateBackend()
+            if curl_b.is_available():
+                status, xml_raw = curl_b.fetch(current_url)
+                if status in (0, 403, 429, 503) or not xml_raw:
+                    proxy = default_http_client.get_active_proxy()
+                    if proxy:
+                        status, xml_raw = curl_b.fetch(current_url, proxy=proxy)
+                if status == 200 and xml_raw:
+                    xml_text = xml_raw
+                else:
+                    status, body_bytes, _ = default_http_client.fetch(current_url, timeout=10)
+                    if status != 200 or not body_bytes:
+                        continue
+                    xml_text = _decompress_sitemap_bytes(body_bytes)
+            else:
+                status, body_bytes, _ = default_http_client.fetch(current_url, timeout=15)
+                if status != 200 or not body_bytes:
+                    continue
+                xml_text = _decompress_sitemap_bytes(body_bytes)
         except Exception as e:
             logger.warning(f"Failed to fetch sitemap {current_url}: {e}")
             continue

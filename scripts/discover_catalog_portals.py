@@ -18,7 +18,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB
-from processors.http_client import default_http_client
+from processors.http_client import default_http_client, DEFAULT_PROXIES_FILE
+from backends.curl_impersonate import CurlImpersonateBackend
 from scripts.sitemap_backfill import (
     DEFAULT_FOOTBALL_KEYWORDS,
     fetch_sitemap_urls,
@@ -38,6 +39,11 @@ def run_catalog_discovery(
     max_urls_per_portal: int = 5000,
 ) -> Dict[str, Any]:
     frontier = CrawlFrontier(frontier_db)
+
+    if DEFAULT_PROXIES_FILE.exists():
+        loaded = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
+        if loaded:
+            logger.info(f"[*] Auto-loaded {loaded} proxies from '{DEFAULT_PROXIES_FILE}'")
 
     cat_path = Path(catalog_file)
     if not cat_path.exists():
@@ -149,9 +155,18 @@ def run_catalog_discovery(
         if len(discovered_articles) < 10 and portal_entry.get("has_sports_desk"):
             try:
                 desk_url = portal_entry.get("sports_url") or f"https://{domain}"
-                status, body_bytes, _ = default_http_client.fetch(desk_url, timeout=10.0)
-                if status == 200 and body_bytes:
-                    html_txt = body_bytes.decode("utf-8", errors="replace")
+                curl_b = CurlImpersonateBackend()
+                if curl_b.is_available():
+                    status, html_txt = curl_b.fetch(desk_url)
+                    if status in (0, 403, 429, 503) or not html_txt:
+                        proxy = default_http_client.get_active_proxy()
+                        if proxy:
+                            status, html_txt = curl_b.fetch(desk_url, proxy=proxy)
+                else:
+                    status, body_bytes, _ = default_http_client.fetch(desk_url, timeout=10.0)
+                    html_txt = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
+
+                if status == 200 and html_txt:
                     raw_links = re.findall(r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html_txt, flags=re.DOTALL | re.IGNORECASE)
                     for href, anchor in raw_links:
                         href_clean = href.strip()
