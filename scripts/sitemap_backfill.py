@@ -52,8 +52,12 @@ DEFAULT_FOOTBALL_KEYWORDS = [
     "pegadaian liga 2", "pegadaian-liga-2", "piala presiden", "piala-presiden",
     "piala indonesia", "piala-indonesia", "epa liga 1", "elite pro academy", "soeratin", "piala soeratin",
 
-    # 3. Indonesian Football Governance
+    # 3. Indonesian Football Governance & PSSI Administration
     "pssi", "pt lib", "pt-lib", "operator liga", "komdis pssi", "exco pssi",
+    "klb pssi", "sarasehan sepak bola", "kongres luar biasa pssi", "ratu tisha",
+    "zainudin amali", "arya sinulingga", "sumardji", "kombes sumardji",
+    "iwan bule", "mochamad iriawan", "satgas anti mafia bola", "satgas antimafia bola",
+    "mafia bola", "pengaturan skor", "tc ikn", "training center ikn",
 
     # 4. Indonesian National Team (Timnas)
     "timnas", "timnas indonesia", "timnas-indonesia", "skuad garuda", "garuda muda",
@@ -64,7 +68,7 @@ DEFAULT_FOOTBALL_KEYWORDS = [
     "shin tae-yong", "shin tae yong", "sty", "erick thohir", "erick-thohir",
     "indra sjafri", "nova arianto", "coach justin", "bung ropan", "bung binder",
     "bojan hodak", "carlos pena", "gilbert agius", "pieter huistra", "paul munster",
-    "stefano cugurra", "teco", "bernardo tavares",
+    "stefano cugurra", "teco", "bernardo tavares", "bima sakti", "frank wormuth", "yoshimi ogawa",
 
     # 6. Indonesian National Team & Star League Players
     "jay idzes", "thom haye", "maarten paes", "marselino ferdinan", "marselino",
@@ -72,6 +76,8 @@ DEFAULT_FOOTBALL_KEYWORDS = [
     "rizky ridho", "asnawi mangkualam", "asnawi", "pratama arhan", "arhan", "justin hubner",
     "sandy walsh", "jordi amat", "ivar jenner", "shayne pattynama", "eliano reijnders",
     "mees hilgers", "kevin diks", "jens raven", "ole romeny", "mauro zijlstra",
+    "elkan baggott", "elkan", "welber jardim", "amar brkic", "arkhan kaka", "ji da-bin",
+    "sulthan zaky", "cyrus margono", "tim geypens", "dion markx",
     "ernando ari", "nadeo argawinata", "dimas drajad", "hokky caraka",
     "arkhan fikri", "kadek arel", "dony tri pamungkas", "iqbal gwijangge",
     "egy maulana vikri", "egy maulana", "witan sulaeman", "ricky kambuaya", "marc klok",
@@ -115,15 +121,21 @@ DEFAULT_FOOTBALL_KEYWORDS = [
 
     # 10. Asian & ASEAN Regional Tournaments
     "piala asia", "asian cup", "piala-asia", "afc", "kualifikasi piala asia",
+    "piala asia u23", "piala asia u20", "piala asia u17", "piala asia u-23", "piala asia u-20", "piala asia u-17",
     "piala aff", "piala-aff", "aff cup", "asean cup", "asean championship",
-    "afc champions league", "acl two", "piala afc", "sea games",
+    "afc champions league", "acl two", "piala afc", "sea games", "sea games kamboja", "sea games 2023", "emas sea games",
 
     # 11. World Cup & Global Tournaments
     "piala dunia", "world cup", "world-cup", "piala-dunia", "fifa",
     "kualifikasi piala dunia", "kualifikasi-piala-dunia", "fifa matchday", "fifa match day",
+    "piala dunia u-17", "piala dunia u-20", "world cup u-17", "world cup u-20",
+    "u-17 world cup", "u-20 world cup", "fifa u-17", "fifa u-20", "piala dunia u17", "piala dunia u20",
 
-    # 12. Domestic Football Rules, Transfers & Match Terminology
+    # 12. Domestic Football Rules, Transfers, Events & Match Terminology
+    "tragedi kanjuruhan", "kanjuruhan", "sidang kanjuruhan",
     "bursa transfer", "transfer window", "degradasi", "promosi liga",
+    "kuota pemain asing", "pemain asing 5+1", "pemain asing 8", "regulasi u-23",
+    "lisensi klub afc", "audit klub liga 1", "verifikasi stadion",
     "kartu merah", "kartu kuning", "clean sheet", "hattrick", "adu penalti",
     "perpanjangan waktu", "video assistant referee", "championship series", "regular series",
     "peringkat fifa", "ranking fifa", "ultras garuda", "la grande indonesia",
