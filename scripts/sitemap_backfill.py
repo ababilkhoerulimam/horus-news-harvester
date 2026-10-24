@@ -582,6 +582,51 @@ def fetch_archive_articles(
 
     logger.info(f"Generated {len(archive_urls)} archive date index pages for '{portal}' ({start_date} to {end_date})")
 
+    curl_b = CurlImpersonateBackend()
+    if curl_b.is_available() and len(archive_urls) > 5:
+        # High-speed concurrent date index scanner for deep historical backfills (>5 dates)
+        async def _async_index_scan():
+            session = curl_b.create_async_session()
+            sem = asyncio.Semaphore(20)
+
+            async def _fetch_date(arch_url):
+                if max_articles > 0 and len(collected) >= max_articles:
+                    return
+                date_match = re.search(r"(\d{4}[-/]\d{2}[-/]\d{2}|\d{2}%2F\d{2}%2F\d{4})", arch_url)
+                arch_date_str = date_match.group(1) if date_match else ""
+                for page_num in range(1, max_pages_per_date + 1):
+                    if max_articles > 0 and len(collected) >= max_articles:
+                        break
+                    target_page_url = generate_archive_page_url(arch_url, portal=portal, page_num=page_num)
+                    async with sem:
+                        try:
+                            status, html = await curl_b.fetch_async(session, target_page_url, proxy=None)
+                            if status != 200 or not html:
+                                break
+                            items = parse_archive_index_html(html, portal=portal, archive_date=arch_date_str)
+                            if not items:
+                                break
+                            new_count = 0
+                            for item in items:
+                                u = item["url"]
+                                if u not in seen:
+                                    seen.add(u)
+                                    collected.append(item)
+                                    new_count += 1
+                                    if max_articles > 0 and len(collected) >= max_articles:
+                                        break
+                            if new_count == 0:
+                                break
+                        except Exception:
+                            break
+
+            await asyncio.gather(*[_fetch_date(u) for u in archive_urls])
+            if session:
+                await session.close()
+
+        asyncio.run(_async_index_scan())
+        return collected
+
     for arch_url in archive_urls:
         if max_articles > 0 and len(collected) >= max_articles:
             break
@@ -937,20 +982,21 @@ def run_sitemap_backfill(
         # B. Archive date index & WP-REST discovery
         if mode in ("archive", "both") and start_date and end_date:
             portals_to_archive = []
-            if portal and portal.lower() == "all":
+            if not portal or portal.lower() == "all":
                 portals_to_archive.extend(list(ARCHIVE_PORTAL_CONFIGS.keys()))
                 portals_to_archive.extend(list(WORDPRESS_REST_PORTALS.keys()))
-            elif portal:
-                portals_to_archive.append(portal.lower().strip())
             else:
-                portals_to_archive.append(target_portal)
+                portals_to_archive.append(portal.lower().strip())
 
             summary = frontier.get_frontier_summary()
             existing_counts = {p: p_data.get("total", 0) for p, p_data in summary.get("portals", {}).items()}
 
+            is_deep_historical = bool((days and days > 365) or (start_date and start_date < "2025-10-01"))
+
             for p_item in portals_to_archive:
-                # In 'all' mode, skip re-crawling portals that already have thousands of items in frontier
-                if portal and portal.lower() == "all" and existing_counts.get(p_item, 0) >= 5000:
+                # In 'all' mode, skip re-crawling portals that already have thousands of items in frontier,
+                # UNLESS a deep historical range is requested (days > 365 or explicit prior-year start_date)
+                if (not portal or portal.lower() == "all") and existing_counts.get(p_item, 0) >= 5000 and not is_deep_historical:
                     print(f"[*] Archive {p_item}: already has {existing_counts[p_item]} items in frontier, skipping redundant index crawl.")
                     continue
 
