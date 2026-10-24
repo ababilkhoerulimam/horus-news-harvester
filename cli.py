@@ -85,6 +85,7 @@ def main():
     backfill_parser.add_argument("--stats", action="store_true", help="Display crawl frontier progress statistics")
     backfill_parser.add_argument("--limit", "-l", type=int, default=100, help="Maximum articles to harvest")
     backfill_parser.add_argument("--workers", "-w", type=int, default=5, help="Concurrent extraction threads (default: 5)")
+    backfill_parser.add_argument("--cores", "-c", type=int, default=2, help="CPU cores allocated for parallel process execution (default: 2)")
     backfill_parser.add_argument("--output", "-o", default="data/raw/news/football.jsonl", help="Output JSONL file (default: data/raw/news/football.jsonl)")
     backfill_parser.add_argument("--proxy", default=None, help="Direct HTTP proxy endpoint (e.g. http://user:pass@ip:port)")
     backfill_parser.add_argument("--proxies-file", default=None, help="Path to text file containing rotating proxy list")
@@ -302,7 +303,8 @@ def main():
                 resume=args.resume,
                 output_file=args.output,
                 max_articles=args.limit,
-                max_workers=args.workers
+                max_workers=args.workers,
+                cores=args.cores,
             )
             if res.get("status") == "success":
                 print(f"[+] Backfill batch completed!")

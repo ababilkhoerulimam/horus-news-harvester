@@ -249,6 +249,22 @@ class TestMultiPortalArchiveAndWPRest(unittest.TestCase):
         self.assertIn("persib", items[0]["url"])
         self.assertIn("Persib Raih Kemenangan", items[0]["title"])
 
+    def test_run_sitemap_backfill_signature_and_empty_queue(self):
+        from scripts.sitemap_backfill import run_sitemap_backfill
+        with tempfile.TemporaryDirectory() as td:
+            db_file = Path(td) / "temp_frontier.db"
+            out_file = Path(td) / "temp_out.jsonl"
+            res = run_sitemap_backfill(
+                portal="detik",
+                resume=True,
+                output_file=str(out_file),
+                max_articles=10,
+                cores=2,
+                frontier_db=str(db_file),
+            )
+            self.assertEqual(res["status"], "success")
+            self.assertEqual(res["collected"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

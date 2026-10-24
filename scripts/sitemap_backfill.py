@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import gzip
 import logging
+import multiprocessing
+from multiprocessing import Process
 import os
 import re
 import sys
@@ -697,6 +699,170 @@ def fetch_wordpress_rest_articles(
     return collected
 
 
+async def _async_backfill_worker_loop(
+    worker_id: int,
+    output_part_file: str,
+    frontier_db: str,
+    concurrency: int = 30,
+    limit_per_worker: int = 50000,
+    min_content_length: int = 150,
+    portal_filter: Optional[str] = None,
+):
+    """Event loop for one CPU core backfill process, streaming requests via AsyncQueue (direct-first)."""
+    curl_backend = CurlImpersonateBackend()
+    channel = PortalNewsChannel()
+    frontier = CrawlFrontier(frontier_db, batch_size=50)
+    session = curl_backend.create_async_session()
+    extracted_total = 0
+
+    part_path = Path(output_part_file)
+    part_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_lock = asyncio.Lock()
+    db_lock = asyncio.Lock()
+
+    async def _fetch_single(cand: Dict[str, Any], out_handle):
+        nonlocal extracted_total
+        u = cand["url"]
+        norm_u = normalize_portal_url(u)
+        try:
+            # 1. Primary: Direct fetch (fast, ~0.15s)
+            status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
+
+            # Fallback to rotating proxy if WAF/blocked/challenge
+            if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
+                proxy = default_http_client.get_active_proxy()
+                if proxy:
+                    status, html = await curl_backend.fetch_async(session, norm_u, proxy=proxy)
+
+            if status == 200 and html and not is_cloudflare_challenge(status, html):
+                content = extract_clean_article_text(html)
+                if len(content) >= min_content_length:
+                    record = {
+                        "url": u,
+                        "title": cand.get("title") or "",
+                        "published_date": cand.get("published_date") or "",
+                        "archive_date": cand.get("archive_date", ""),
+                        "content": content,
+                        "source": urlparse(u).netloc,
+                        "backend": "curl_impersonate",
+                        "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                    async with file_lock:
+                        out_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        extracted_total += 1
+                        curr = extracted_total
+
+                    async with db_lock:
+                        frontier.mark_completed(u)
+
+                    if curr % 50 == 0:
+                        async with file_lock:
+                            out_handle.flush()
+                        async with db_lock:
+                            frontier.flush()
+                        logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
+                    return
+
+            # 2. Secondary fallback via thread pool (for complex CMS or fallback)
+            res = await asyncio.to_thread(channel.extract, u, {"disable_headless": True})
+            if res.get("status") == "success" and len(res.get("content", "")) >= min_content_length:
+                record = {
+                    "url": u,
+                    "title": cand.get("title") or res.get("title") or "",
+                    "published_date": cand.get("published_date") or res.get("published_date") or "",
+                    "archive_date": cand.get("archive_date", ""),
+                    "content": res.get("content", ""),
+                    "source": urlparse(u).netloc,
+                    "backend": res.get("backend", "direct_http"),
+                    "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                async with file_lock:
+                    out_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    extracted_total += 1
+                    curr = extracted_total
+
+                async with db_lock:
+                    frontier.mark_completed(u)
+
+                if curr % 50 == 0:
+                    async with file_lock:
+                        out_handle.flush()
+                    async with db_lock:
+                        frontier.flush()
+                    logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
+                return
+
+            async with db_lock:
+                frontier.mark_failed(u, error="Content length below minimum threshold")
+        except Exception as e:
+            async with db_lock:
+                frontier.mark_failed(u, error=str(e))
+
+    try:
+        with open(part_path, "a", encoding="utf-8") as out_f:
+            while extracted_total < limit_per_worker:
+                if worker_id > 0:
+                    await asyncio.sleep(0.05 * worker_id)
+
+                batch = frontier.claim_pending_batch(limit=concurrency * 4, portal=portal_filter)
+                if not batch:
+                    break
+
+                if not portal_filter:
+                    batch = interleave_by_portal(batch)
+
+                queue: asyncio.Queue = asyncio.Queue()
+                for item in batch:
+                    queue.put_nowait(item)
+
+                async def _worker():
+                    while not queue.empty():
+                        try:
+                            item = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        await _fetch_single(item, out_f)
+                        queue.task_done()
+
+                worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+                await asyncio.gather(*worker_tasks)
+                out_f.flush()
+                frontier.flush()
+                logger.info(f"[Core-{worker_id}] Batch completed | Extracted: {extracted_total} articles")
+    finally:
+        frontier.flush()
+        frontier.close()
+        if session is not None:
+            try:
+                await session.close()
+            except Exception:
+                pass
+
+
+def _backfill_worker_process_entrypoint(
+    worker_id: int,
+    output_part_file: str,
+    frontier_db: str,
+    concurrency: int = 30,
+    limit_per_worker: int = 50000,
+    min_content_length: int = 150,
+    portal_filter: Optional[str] = None,
+):
+    """Top-level process entrypoint for backfill multiprocessing spawn on Windows."""
+    asyncio.run(
+        _async_backfill_worker_loop(
+            worker_id=worker_id,
+            output_part_file=output_part_file,
+            frontier_db=frontier_db,
+            concurrency=concurrency,
+            limit_per_worker=limit_per_worker,
+            min_content_length=min_content_length,
+            portal_filter=portal_filter,
+        )
+    )
+
+
 def run_sitemap_backfill(
     portal: Optional[str] = None,
     sitemap_url: Optional[str] = None,
@@ -709,7 +875,8 @@ def run_sitemap_backfill(
     max_articles: int = 100,
     max_workers: int = 5,
     min_content_length: int = 150,
-    frontier_db: str = DEFAULT_FRONTIER_DB
+    frontier_db: str = DEFAULT_FRONTIER_DB,
+    cores: int = 2,
 ) -> Dict[str, Any]:
     """
     Orchestrates historical football article backfilling via sitemaps and date archives.
@@ -809,69 +976,141 @@ def run_sitemap_backfill(
     # 4. Ingestion / Extraction Phase from Persistent Frontier
     portal_filter = None if (not portal or portal.lower() == "all") else portal.lower().strip()
     batch_limit = max_articles if (max_articles and max_articles > 0) else 5000000
-    batch = frontier.get_pending_batch(limit=batch_limit, portal=portal_filter)
-    if not batch:
-        summary = frontier.get_frontier_summary()
-        return {
-            "status": "success",
-            "message": "No pending items in frontier queue.",
-            "collected": 0,
-            "new_candidates_added": new_candidates_added,
-            "frontier_summary": summary,
-            "output_file": str(out_path),
-        }
+    actual_cores = max(1, cores)
 
-    # Interleave batch across portals for balanced origin load and maximum throughput
-    if not portal_filter:
-        batch = interleave_by_portal(batch)
-
-    urls_to_process = [item["url"] for item in batch]
-    frontier.mark_in_progress(urls_to_process)
-    written_count = 0
-    channel = PortalNewsChannel()
     curl_backend = CurlImpersonateBackend()
+    written_count = 0
+    batch: List[Dict[str, Any]] = []
 
-    if curl_backend.is_available():
-        # On Windows, keep socket concurrency within OS loopback limits (max 40) to prevent WinError 10054
-        concurrency = min(max_workers if max_workers > 0 else 35, 40)
-        logger.info(f"Processing batch of {len(batch)} candidate articles via AsyncQueue (concurrency: {concurrency}, direct-first)")
+    if curl_backend.is_available() and actual_cores >= 2:
+        concurrency = min(max_workers if max_workers > 0 else 30, 40)
+        limit_per_core = max(1, batch_limit // actual_cores)
+        logger.info(
+            f"Starting {actual_cores}-Core Async Backfill ({actual_cores} cores x {concurrency} sockets) -> '{out_path}'"
+        )
 
-        async def _async_backfill_runner():
-            nonlocal written_count
-            session = curl_backend.create_async_session()
-            queue: asyncio.Queue = asyncio.Queue()
-            for cand in batch:
-                queue.put_nowait(cand)
+        processes: List[Process] = []
+        part_files: List[Path] = []
+        for i in range(actual_cores):
+            p_file = Path(f"{output_file}.part{i}")
+            part_files.append(p_file)
+            p = Process(
+                target=_backfill_worker_process_entrypoint,
+                args=(i, str(p_file), frontier_db, concurrency, limit_per_core, min_content_length, portal_filter),
+            )
+            processes.append(p)
+            p.start()
 
-            file_lock = asyncio.Lock()
-            db_lock = asyncio.Lock()
+        for p in processes:
+            p.join()
 
-            with open(out_path, "a", encoding="utf-8") as f:
-                async def _fetch_single(cand: Dict[str, Any]):
-                    nonlocal written_count
-                    u = cand["url"]
-                    norm_u = normalize_portal_url(u)
+        merged_count = 0
+        with open(out_path, "a", encoding="utf-8") as main_out:
+            for p_file in part_files:
+                if p_file.exists():
+                    with open(p_file, "r", encoding="utf-8") as pf:
+                        for line in pf:
+                            if line.strip():
+                                main_out.write(line)
+                                merged_count += 1
                     try:
-                        # 1. Primary: Direct fetch (fast, ~0.15s)
-                        status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
+                        p_file.unlink()
+                    except Exception:
+                        pass
+        written_count = merged_count
+        logger.info(f"[+] Consolidated {merged_count} articles across {actual_cores} cores into '{out_path.name}'")
 
-                        # Check if Cloudflare / rate limited / blocked -> Fallback to rotating proxy
-                        if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
-                            proxy = default_http_client.get_active_proxy()
-                            if proxy:
-                                status, html = await curl_backend.fetch_async(session, norm_u, proxy=proxy)
+    else:
+        batch = frontier.get_pending_batch(limit=batch_limit, portal=portal_filter)
+        if not batch:
+            summary = frontier.get_frontier_summary()
+            return {
+                "status": "success",
+                "message": "No pending items in frontier queue.",
+                "collected": 0,
+                "new_candidates_added": new_candidates_added,
+                "frontier_summary": summary,
+                "output_file": str(out_path),
+            }
 
-                        if status == 200 and html and not is_cloudflare_challenge(status, html):
-                            content = extract_clean_article_text(html)
-                            if len(content) >= min_content_length:
+        # Interleave batch across portals for balanced origin load and maximum throughput
+        if not portal_filter:
+            batch = interleave_by_portal(batch)
+
+        urls_to_process = [item["url"] for item in batch]
+        frontier.mark_in_progress(urls_to_process)
+        channel = PortalNewsChannel()
+
+        if curl_backend.is_available():
+            # On Windows, keep socket concurrency within OS loopback limits (max 40) to prevent WinError 10054
+            concurrency = min(max_workers if max_workers > 0 else 35, 40)
+            logger.info(f"Processing batch of {len(batch)} candidate articles via AsyncQueue (concurrency: {concurrency}, direct-first)")
+
+            async def _async_backfill_runner():
+                nonlocal written_count
+                session = curl_backend.create_async_session()
+                queue: asyncio.Queue = asyncio.Queue()
+                for cand in batch:
+                    queue.put_nowait(cand)
+
+                file_lock = asyncio.Lock()
+                db_lock = asyncio.Lock()
+
+                with open(out_path, "a", encoding="utf-8") as f:
+                    async def _fetch_single(cand: Dict[str, Any]):
+                        nonlocal written_count
+                        u = cand["url"]
+                        norm_u = normalize_portal_url(u)
+                        try:
+                            # 1. Primary: Direct fetch (fast, ~0.15s)
+                            status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
+
+                            # Check if Cloudflare / rate limited / blocked -> Fallback to rotating proxy
+                            if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
+                                proxy = default_http_client.get_active_proxy()
+                                if proxy:
+                                    status, html = await curl_backend.fetch_async(session, norm_u, proxy=proxy)
+
+                            if status == 200 and html and not is_cloudflare_challenge(status, html):
+                                content = extract_clean_article_text(html)
+                                if len(content) >= min_content_length:
+                                    record = {
+                                        "url": u,
+                                        "title": cand.get("title") or "",
+                                        "published_date": cand.get("published_date") or "",
+                                        "archive_date": cand.get("archive_date", ""),
+                                        "content": content,
+                                        "source": urlparse(u).netloc,
+                                        "backend": "curl_impersonate",
+                                        "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    }
+                                    async with file_lock:
+                                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                                        written_count += 1
+                                        current_written = written_count
+
+                                    async with db_lock:
+                                        frontier.mark_completed(u)
+
+                                    if current_written % 50 == 0:
+                                        async with file_lock:
+                                            f.flush()
+                                        async with db_lock:
+                                            frontier.flush()
+                                        logger.info(f"[+] Harvested {current_written}/{len(batch)} candidate articles -> {out_path.name}")
+                                    return
+
+                            # 2. Secondary fallback via thread pool (for complex CMS or fallback)
+                            res = await asyncio.to_thread(channel.extract, u, {"disable_headless": True})
+                            if res.get("status") == "success" and len(res.get("content", "")) >= min_content_length:
                                 record = {
                                     "url": u,
-                                    "title": cand.get("title") or "",
-                                    "published_date": cand.get("published_date") or "",
+                                    "title": cand.get("title") or res.get("title") or "",
+                                    "published_date": cand.get("published_date") or res.get("published_date") or "",
                                     "archive_date": cand.get("archive_date", ""),
-                                    "content": content,
+                                    "content": res.get("content", ""),
                                     "source": urlparse(u).netloc,
-                                    "backend": "curl_impersonate",
+                                    "backend": res.get("backend", "direct_http"),
                                     "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                                 }
                                 async with file_lock:
@@ -890,109 +1129,80 @@ def run_sitemap_backfill(
                                     logger.info(f"[+] Harvested {current_written}/{len(batch)} candidate articles -> {out_path.name}")
                                 return
 
-                        # 2. Secondary fallback via thread pool (for complex CMS or fallback)
-                        res = await asyncio.to_thread(channel.extract, u, {"disable_headless": True})
-                        if res.get("status") == "success" and len(res.get("content", "")) >= min_content_length:
+                            async with db_lock:
+                                frontier.mark_failed(u, error="Content length below minimum threshold")
+                        except Exception as e:
+                            async with db_lock:
+                                frontier.mark_failed(u, error=str(e))
+
+                    async def _worker():
+                        while not queue.empty():
+                            try:
+                                cand = queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                            await _fetch_single(cand)
+                            queue.task_done()
+
+                    worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+                    await asyncio.gather(*worker_tasks)
+                    f.flush()
+                    frontier.flush()
+                    logger.info(f"[+] Final batch flush | Total harvested: {written_count}/{len(batch)} articles -> {out_path.name}")
+
+                if session:
+                    await session.close()
+
+            asyncio.run(_async_backfill_runner())
+
+        else:
+            logger.info(f"Processing batch of {len(batch)} candidate articles via {max_workers} worker threads")
+            file_lock = threading.Lock()
+            db_lock = threading.Lock()
+
+            def _extract_and_stream_worker(cand: Dict[str, Any]) -> bool:
+                nonlocal written_count
+                u = cand["url"]
+                try:
+                    res = channel.extract(u, config={"disable_headless": True})
+                    if res.get("status") == "success":
+                        content = res.get("content", "").strip()
+                        if len(content) >= min_content_length:
                             record = {
                                 "url": u,
                                 "title": cand.get("title") or res.get("title") or "",
                                 "published_date": cand.get("published_date") or res.get("published_date") or "",
                                 "archive_date": cand.get("archive_date", ""),
-                                "content": res.get("content", ""),
+                                "content": content,
                                 "source": urlparse(u).netloc,
                                 "backend": res.get("backend", "direct_http"),
                                 "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             }
-                            async with file_lock:
-                                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                                written_count += 1
-                                current_written = written_count
-
-                            async with db_lock:
-                                frontier.mark_completed(u)
-
-                            if current_written % 50 == 0:
-                                async with file_lock:
+                            line = json.dumps(record, ensure_ascii=False) + "\n"
+                            with file_lock:
+                                with open(out_path, "a", encoding="utf-8") as f:
+                                    f.write(line)
                                     f.flush()
-                                async with db_lock:
-                                    frontier.flush()
-                                logger.info(f"[+] Harvested {current_written}/{len(batch)} candidate articles -> {out_path.name}")
-                            return
+                                written_count += 1
 
-                        async with db_lock:
-                            frontier.mark_failed(u, error="Content length below minimum threshold")
-                    except Exception as e:
-                        async with db_lock:
-                            frontier.mark_failed(u, error=str(e))
-
-                async def _worker():
-                    while not queue.empty():
-                        try:
-                            cand = queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                        await _fetch_single(cand)
-                        queue.task_done()
-
-                worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
-                await asyncio.gather(*worker_tasks)
-                f.flush()
-                frontier.flush()
-                logger.info(f"[+] Final batch flush | Total harvested: {written_count}/{len(batch)} articles -> {out_path.name}")
-
-            if session:
-                await session.close()
-
-        asyncio.run(_async_backfill_runner())
-
-    else:
-        logger.info(f"Processing batch of {len(batch)} candidate articles via {max_workers} worker threads")
-        file_lock = threading.Lock()
-        db_lock = threading.Lock()
-
-        def _extract_and_stream_worker(cand: Dict[str, Any]) -> bool:
-            nonlocal written_count
-            u = cand["url"]
-            try:
-                res = channel.extract(u, config={"disable_headless": True})
-                if res.get("status") == "success":
-                    content = res.get("content", "").strip()
-                    if len(content) >= min_content_length:
-                        record = {
-                            "url": u,
-                            "title": cand.get("title") or res.get("title") or "",
-                            "published_date": cand.get("published_date") or res.get("published_date") or "",
-                            "archive_date": cand.get("archive_date", ""),
-                            "content": content,
-                            "source": urlparse(u).netloc,
-                            "backend": res.get("backend", "direct_http"),
-                            "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        }
-                        line = json.dumps(record, ensure_ascii=False) + "\n"
-                        with file_lock:
-                            with open(out_path, "a", encoding="utf-8") as f:
-                                f.write(line)
-                                f.flush()
-                            written_count += 1
-
-                        with db_lock:
-                            frontier.mark_completed(u)
-                        return True
+                            with db_lock:
+                                frontier.mark_completed(u)
+                            return True
+                        else:
+                            with db_lock:
+                                frontier.mark_failed(u, error="Content length below minimum threshold")
                     else:
                         with db_lock:
-                            frontier.mark_failed(u, error="Content length below minimum threshold")
-                else:
+                            frontier.mark_failed(u, error=res.get("error", "Extraction failed"))
+                except Exception as e:
                     with db_lock:
-                        frontier.mark_failed(u, error=res.get("error", "Extraction failed"))
-            except Exception as e:
-                with db_lock:
-                    frontier.mark_failed(u, error=str(e))
-            return False
+                        frontier.mark_failed(u, error=str(e))
+                return False
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_extract_and_stream_worker, c) for c in batch]
-            for f in as_completed(futures):
-                pass
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(_extract_and_stream_worker, c) for c in batch]
+                for f in as_completed(futures):
+                    pass
 
     summary = frontier.get_frontier_summary()
     return {
