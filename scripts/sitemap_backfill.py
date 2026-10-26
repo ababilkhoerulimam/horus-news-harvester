@@ -251,6 +251,16 @@ WORDPRESS_REST_PORTALS: Dict[str, str] = {
     "niaga_asia": "https://www.niaga.asia/wp-json/wp/v2/posts",
 }
 
+# Self-hosted WordPress or low-resource VPS portals that require traffic-shaping
+# to prevent upstream HTTP 429/504 errors while CDN portals run unthrottled.
+SLOW_PORTAL_DOMAINS = {
+    "niaga.asia",
+    "balipost.com",
+    "bantennews.co.id",
+    "fajar.co.id",
+    "beritajatim.com",
+}
+
 NON_FOOTBALL_SPORTS = [
     "bola voli", "voli", "volleyball",
     "bola basket", "basket", "basketball",
@@ -915,13 +925,25 @@ async def _async_backfill_worker_loop(
                 for item in batch:
                     queue.put_nowait(item)
 
+                domain_semaphores: Dict[str, asyncio.Semaphore] = {}
+
                 async def _worker():
                     while not queue.empty():
                         try:
                             item = queue.get_nowait()
                         except asyncio.QueueEmpty:
                             break
-                        await _fetch_single(item, out_f)
+                        u = item.get("url", "")
+                        domain = urlparse(u).netloc.replace("www.", "").lower()
+                        is_slow = any(s in domain for s in SLOW_PORTAL_DOMAINS)
+                        if is_slow:
+                            if domain not in domain_semaphores:
+                                domain_semaphores[domain] = asyncio.Semaphore(2)
+                            async with domain_semaphores[domain]:
+                                await _fetch_single(item, out_f)
+                                await asyncio.sleep(0.08)
+                        else:
+                            await _fetch_single(item, out_f)
                         queue.task_done()
 
                 worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
@@ -1241,13 +1263,25 @@ def run_sitemap_backfill(
                             async with db_lock:
                                 frontier.mark_failed(u, error=str(e))
 
+                    domain_semaphores: Dict[str, asyncio.Semaphore] = {}
+
                     async def _worker():
                         while not queue.empty():
                             try:
                                 cand = queue.get_nowait()
                             except asyncio.QueueEmpty:
                                 break
-                            await _fetch_single(cand)
+                            u = cand.get("url", "")
+                            domain = urlparse(u).netloc.replace("www.", "").lower()
+                            is_slow = any(s in domain for s in SLOW_PORTAL_DOMAINS)
+                            if is_slow:
+                                if domain not in domain_semaphores:
+                                    domain_semaphores[domain] = asyncio.Semaphore(2)
+                                async with domain_semaphores[domain]:
+                                    await _fetch_single(cand)
+                                    await asyncio.sleep(0.08)
+                            else:
+                                await _fetch_single(cand)
                             queue.task_done()
 
                     worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
