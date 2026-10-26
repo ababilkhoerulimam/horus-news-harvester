@@ -1,199 +1,260 @@
-# Target Configuration for Indonesian Forest & Land Fires (Karhutla) Harvester
-# Designed for Domain-Adaptive Pre-Training (DAPT) and Social Network / Attribution Analysis (SNA)
+# ==============================================================================
+# Topic Configuration: Indonesian Forest & Peatland Fires (Karhutla)
+# National News Intelligence Harvester (NNIH)
+# Optimized for Domain-Adaptive Pre-Training (DAPT) and Corporate SNA / Attribution
+# ==============================================================================
 
 topic:
   id: "karhutla"
   name: "Kebakaran Hutan dan Lahan (Karhutla) Indonesia"
-  description: "Monitoring, atribusi aktor/korporasi, hotspot, dan dampak kabut asap di episentrum Sumatera & Kalimantan"
+  description: "Monitoring hotspot, kabut asap, operasi pemadaman, penegakan hukum korporasi sawit/HTI, restorasi gambut BRGM, dan dampak lintas batas di episentrum Sumatera & Kalimantan"
   default_output: "data/raw/news/karhutla.jsonl"
   default_dapt_output: "data/processed/nusabert_karhutla_dapt.txt"
 
+# ------------------------------------------------------------------------------
+# Exhaustive Multi-Tier Taxonomy for Precision Filtering
+# ------------------------------------------------------------------------------
 keywords:
-  # Peristiwa fisik, titik panas & asap
-  events:
+  # 1. Peristiwa Fisik, Titik Panas, Api & Kualitas Udara
+  events_and_phenomena:
     - "karhutla"
     - "kebakaran hutan"
     - "kebakaran lahan"
+    - "kebakaran hutan dan lahan"
     - "titik panas"
     - "hotspot"
     - "kabut asap"
     - "lahan gambut"
-    - "kedalaman gambut"
     - "kebakaran gambut"
+    - "kedalaman gambut"
+    - "muka air tanah gambut"
     - "titik api"
     - "sebaran asap"
     - "jarak pandang"
     - "ispa"
+    - "infeksi saluran pernapasan akut"
     - "kualitas udara"
     - "ispu"
+    - "indeks standar pencemar udara"
+    - "pm2.5"
+    - "aqi"
     - "bencana kabut asap"
     - "darurat asap"
+    - "emisi karbon gambut"
+    - "smoldering fire"
+    - "kebakaran bawah permukaan"
 
-  # Operasi pemadaman & respon lapangan
-  operations:
+  # 2. Penginderaan Jauh, Satelit & Monitoring Cuaca
+  satellite_and_detection:
+    - "sipongi"
+    - "sipongi klhk"
+    - "nasa firms"
+    - "sensor modis"
+    - "sensor viirs"
+    - "satelit terra aqua"
+    - "terra aqua"
+    - "satelit lapan"
+    - "satelit brin"
+    - "bmkg hotspot"
+    - "deteksi titik panas"
+    - "citra satelit sentinel"
+    - "indeks kerapatan vegetasi"
+    - "ndvi"
+    - "peta tutupan lahan"
+    - "anomali iklim el nino"
+    - "el nino"
+    - "musim kemarau ekstrem"
+
+  # 3. Operasi Pemadaman Lapangan & Mitigasi Bencana
+  operations_and_mitigation:
     - "manggala agni"
+    - "satgas karhutla"
     - "bnpb"
-    - "bpbd"
+    - "bpbd riau"
+    - "bpbd kalteng"
+    - "bpbd kalbar"
+    - "bpbd sumsel"
+    - "bpbd jambi"
     - "water bombing"
     - "helikopter water bombing"
+    - "water bombing kamov"
     - "teknologi modifikasi cuaca"
     - "tmc hujan buatan"
     - "sekat kanal"
     - "sumur bor gambut"
     - "pemadaman darat"
-    - "satgas karhutla"
-    - "tni polri padamkan"
+    - "tni polri padamkan karhutla"
+    - "patroli terpadu karhutla"
+    - "posko siaga darurat karhutla"
 
-  # Penegakan hukum, investigasi & atribusi aktor
-  enforcement:
+  # 4. Kebijakan Gambut, Konservasi & Restorasi
+  peatland_and_restoration:
+    - "brgm"
+    - "badan restorasi gambut"
+    - "badan restorasi gambut dan mangrove"
+    - "rewetting gambut"
+    - "pembasahan gambut"
+    - "revegetasi gambut"
+    - "revitalisasi ekonomi gambut"
+    - "kubah gambut"
+    - "kawasan hidrologis gambut"
+    - "khg"
+    - "moratorium gambut"
+    - "inpres moratorium"
+    - "perlindungan ekosistem gambut"
+    - "pp nomor 57 tahun 2016"
+
+  # 5. Penegakan Hukum, Investigasi & Pertanggungjawaban Korporasi
+  enforcement_and_corporate_crime:
     - "gakkum klhk"
-    - "segel konsesi"
+    - "tipidter bareskrim"
+    - "satgas gakkum karhutla"
     - "penyegelan lahan"
+    - "segel konsesi"
+    - "pemasangan plang segel"
     - "tersangka karhutla"
     - "tersangka korporasi"
-    - "pembakaran berencana"
-    - "gugatan perdata karhutla"
-    - "denda karhutla"
-    - "kejahatan lingkungan"
+    - "korporasi sawit tersangka"
+    - "kejahatan lingkungan hidup"
     - "pidana lingkungan hidup"
-    - "polda riau karhutla"
-    - "polda kalteng karhutla"
-    - "polda sumsel karhutla"
+    - "undang undang lingkungan hidup"
+    - "uu ppltl"
+    - "gugatan perdata karhutla"
+    - "ganti rugi karhutla"
+    - "denda perdata karhutla"
+    - "eksekusi denda klhk"
+    - "pembakaran berencana"
+    - "land clearing bakar"
+    - "pembukaan lahan sawit bakar"
+    - "pembekuan izin konsesi"
+    - "pencabutan izin hgu"
+    - "strict liability lingkungan"
+    - "tanggung jawab mutlak korporasi"
 
-  # Sektor industri, perizinan & konsesi
-  industry_and_land:
+  # 6. Sektor Industri, Perizinan & Pemegang Konsesi
+  industry_and_corporate_actors:
     - "kelapa sawit"
-    - "kebun sawit"
+    - "perkebunan sawit"
     - "hutan tanaman industri"
     - "hti"
     - "hak guna usaha"
     - "hgu"
-    - "moratorium gambut"
-    - "izin pelepasan kawasan hutan"
-    - "perambahan hutan"
-    - "land clearing"
-    - "bakar lahan buka kebun"
+    - "izin usaha pemanfaatan hasil hutan kayu"
+    - "iuphhk"
+    - "konsesi hti"
+    - "konsesi sawit"
+    - "pulp and paper"
+    - "pt rapp"
+    - "april group"
+    - "app sinarmas"
+    - "sinarmas forestry"
+    - "wilmar"
+    - "astra agro lestari"
+    - "sampoerna agro"
+    - "pt kallista alam"
+    - "rawa tripa"
 
-  # Lokasi geografis kritis (ground-zero)
+  # 7. Isu Regional ASEAN & Dampak Lintas Batas (Transboundary Haze)
+  transboundary_and_diplomacy:
+    - "transboundary haze"
+    - "polusi asap lintas batas"
+    - "asean haze agreement"
+    - "asean agreement on transboundary haze pollution"
+    - "kabut asap kiriman"
+    - "asap lintas batas"
+    - "protes singapura"
+    - "keluhan malaysia"
+    - "transboundary pollution act"
+    - "peta sebaran asap regional"
+
+  # 8. Lokasi Geografis Episentrum (Ground Zero)
   focal_regions:
     riau:
       - "riau"
       - "pekanbaru"
       - "bengkalis"
       - "rokan hilir"
+      - "rokan hulu"
       - "pelalawan"
       - "siak"
       - "dumai"
       - "indragiri hilir"
+      - "inhil"
       - "indragiri hulu"
+      - "inhu"
+      - "kepulauan meranti"
     kalimantan_tengah:
+      - "kalimantan tengah"
+      - "kalteng"
       - "palangka raya"
       - "pulang pisau"
       - "kotawaringin timur"
       - "sampit"
-      - "kapuas"
+      - "kotawaringin barat"
       - "pangkalan bun"
-      - "kobar"
+      - "kapuas"
+      - "katingan"
+      - "seruyan"
     kalimantan_barat:
+      - "kalimantan barat"
+      - "kalbar"
       - "pontianak"
       - "kubu raya"
       - "ketapang"
       - "sambas"
       - "sintang"
+      - "sanggau"
+      - "kayong utara"
     sumatera_selatan:
+      - "sumatera selatan"
+      - "sumsel"
       - "ogan komering ilir"
       - "oki"
       - "musi banyuasin"
+      - "muba"
       - "banyuasin"
-      - "palembang asap"
+      - "palembang"
+      - "musi rawas"
     jambi:
+      - "jambi"
       - "muaro jambi"
       - "tanjung jabung timur"
+      - "tanjabtim"
       - "tanjung jabung barat"
+      - "tanjabbar"
+    kalimantan_selatan:
+      - "kalimantan selatan"
+      - "kalsel"
+      - "banjarbaru"
+      - "kabupaten banjar"
+      - "tanah laut"
+      - "barito kuala"
+    kalimantan_timur:
+      - "kalimantan timur"
+      - "kaltim"
+      - "kutai kartanegara"
+      - "kukar"
+      - "paser"
+      - "penajam paser utara"
 
-# Portal Media Prioritas untuk Karhutla
-target_portals:
-  # 1. Investigasi & Jurnalisme Lingkungan (Otoritatif & Mendalam)
-  environmental_investigative:
-    - domain: "mongabay.co.id"
-      name: "Mongabay Indonesia"
-      type: "investigative_environment"
-      adapter: "sitemap"
-      sitemap_url: "https://www.mongabay.co.id/sitemap_index.xml"
-    - domain: "betahita.id"
-      name: "Betahita"
-      type: "investigative_environment"
-      adapter: "sitemap"
-      sitemap_url: "https://betahita.id/sitemap.xml"
-    - domain: "forestdigest.com"
-      name: "Forest Digest"
-      type: "policy_forestry"
-      adapter: "wordpress_rest"
-      wp_api_base: "https://forestdigest.com/wp-json/wp/v2"
-    - domain: "projectmultatuli.org"
-      name: "Project Multatuli"
-      type: "investigative"
-      adapter: "wordpress_rest"
-      wp_api_base: "https://projectmultatuli.org/wp-json/wp/v2"
+# ------------------------------------------------------------------------------
+# Declarative Multi-Tier Portal Routing via NNIH Catalog Presets
+# ------------------------------------------------------------------------------
+portals:
+  presets:
+    # 1. 15 Media Nasional Arus Utama (Kebijakan Pusat, SiPongi KLHK, BNPB, BMKG)
+    - "national_wire"
+    # 2. 14 Portal Episentrum Daerah (Ground-Zero Riau, Kalteng, Kalbar, Jambi, Sumsel)
+    - "regional_epicenters"
+    # 3. Media Jurnalisme Investigasi Lingkungan & Kebijakan Hutan
+    - "investigative_environment"
+  include: []
+  exclude: []
 
-  # 2. Episentrum Sumatera (Riau, Jambi, Sumsel)
-  sumatra_ground_zero:
-    - domain: "goriau.com"
-      name: "GoRiau"
-      region: "Riau"
-      adapter: "sitemap"
-      sitemap_url: "https://www.goriau.com/sitemap.xml"
-    - domain: "riaupos.co"
-      name: "Riau Pos"
-      region: "Riau"
-      adapter: "sitemap"
-      sitemap_url: "https://riaupos.jawapos.com/sitemap.xml"
-    - domain: "jambiekspres.co.id"
-      name: "Jambi Ekspres"
-      region: "Jambi"
-      adapter: "sitemap"
-      sitemap_url: "https://jambiekspres.jawapos.com/sitemap.xml"
-    - domain: "sumeks.co"
-      name: "Sumeks (Sumatera Ekspres)"
-      region: "Sumatera Selatan"
-      adapter: "sitemap"
-      sitemap_url: "https://sumeks.disway.id/sitemap.xml"
-
-  # 3. Episentrum Kalimantan (Kalteng, Kalbar, Kalsel, Kaltim)
-  kalimantan_ground_zero:
-    - domain: "borneonews.co.id"
-      name: "Borneo News"
-      region: "Kalimantan Tengah"
-      adapter: "sitemap"
-      sitemap_url: "https://www.borneonews.co.id/sitemap.xml"
-    - domain: "kaltengpos.co"
-      name: "Kalteng Pos"
-      region: "Kalimantan Tengah"
-      adapter: "sitemap"
-      sitemap_url: "https://kaltengpos.jawapos.com/sitemap.xml"
-    - domain: "pontianakpost.jawapos.com"
-      name: "Pontianak Post"
-      region: "Kalimantan Barat"
-      adapter: "sitemap"
-      sitemap_url: "https://pontianakpost.jawapos.com/sitemap.xml"
-    - domain: "banjarmasinpost.co.id"
-      name: "Banjarmasin Post"
-      region: "Kalimantan Selatan"
-      adapter: "sitemap"
-      sitemap_url: "https://banjarmasin.tribunnews.com/sitemap.xml"
-    - domain: "niaga.asia"
-      name: "Niaga Asia"
-      region: "Kalimantan Timur"
-      adapter: "wordpress_rest"
-      wp_api_base: "https://www.niaga.asia/wp-json/wp/v2"
-
-  # 4. Media Nasional Arus Utama (Kebijakan Pusat & Data BNPB/BMKG/KLHK)
-  national_wire:
-    - domain: "antaranews.com"
-      name: "LKBN Antara"
-    - domain: "kompas.com"
-      name: "Kompas.com"
-    - domain: "tempo.co"
-      name: "Tempo.co"
-    - domain: "detik.com"
-      name: "Detikcom"
+# ------------------------------------------------------------------------------
+# Export & Quality Threshold
+# ------------------------------------------------------------------------------
+output:
+  format: "jsonl"
+  destination_path: "data/raw/news/karhutla.jsonl"
+  min_word_count: 50
