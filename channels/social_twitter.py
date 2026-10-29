@@ -5,6 +5,7 @@ Extracts public timeline tweets, reactions, and replies without API keys.
 """
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -14,12 +15,14 @@ import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import SportsChannel
-from backends.jina_reader import JinaReaderBackend
+from processors.tweet_normalizer import normalize_tweet
 from backends.firefox_cookies import load_twitter_session, extract_firefox_twitter_tokens, save_twitter_session
 from backends.twitter_graphql import TwitterGraphQLBackend
-from processors.cleaner import clean_news_text
+
+logger = logging.getLogger("social_twitter")
 
 SYNDICATION_URL = "https://syndication.twitter.com/srv/timeline-profile/screen-name/{username}"
+TWEET_RESULT_URL = "https://cdn.syndication.twimg.com/tweet-result?id={tweet_id}&lang=id&token=a"
 WEB_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 
@@ -28,11 +31,10 @@ class TwitterChannel(SportsChannel):
 
     name = "social_twitter"
     description = "Twitter/X Diskusi Komunitas dan Influencer Olahraga Indonesia"
-    backends = ["graphql_api", "syndication_api", "jina_reader", "twitter_cli"]
+    backends = ["graphql_api", "syndication_api", "twitter_cli"]
     tier = 0
 
     def __init__(self):
-        self.jina = JinaReaderBackend()
         self.graphql_client = None
         self._init_session()
 
@@ -106,7 +108,8 @@ class TwitterChannel(SportsChannel):
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
-        except Exception:
+        except Exception as exc:
+            logger.warning("Syndication fetch failed for %s: %s", username, exc)
             return []
 
         match = re.search(r'<script\s+id="__NEXT_DATA__"\s+type="application/json">([^<]+)</script>', html)
@@ -115,7 +118,8 @@ class TwitterChannel(SportsChannel):
 
         try:
             data = json.loads(match.group(1))
-        except Exception:
+        except Exception as exc:
+            logger.warning("Syndication payload for %s is not JSON: %s", username, exc)
             return []
 
         timeline = data.get("props", {}).get("pageProps", {}).get("timeline", {})
@@ -131,60 +135,13 @@ class TwitterChannel(SportsChannel):
             if not tweet_data:
                 continue
 
-            legacy = tweet_data.get("legacy", tweet_data)
-            tweet_id = tweet_data.get("id_str") or legacy.get("id_str") or tweet_data.get("rest_id", "")
-            raw_text = legacy.get("full_text") or legacy.get("text") or ""
-            cleaned_text = clean_news_text(raw_text)
-
-            user_info = tweet_data.get("user", {})
-            author_name = user_info.get("name", username)
-            screen_name = user_info.get("screen_name", username)
-
-            tweets.append({
-                "tweet_id": str(tweet_id),
-                "title": f"Tweet by @{screen_name}",
-                "author": author_name,
-                "username": screen_name,
-                "text": cleaned_text,
-                "url": f"https://x.com/{screen_name}/status/{tweet_id}" if tweet_id else f"https://x.com/{screen_name}",
-                "published_date": legacy.get("created_at", ""),
-                "metrics": {
-                    "likes": legacy.get("favorite_count", 0),
-                    "retweets": legacy.get("retweet_count", 0),
-                    "replies": legacy.get("reply_count", 0),
-                },
-                "backend": "syndication_api"
-            })
+            record = normalize_tweet(tweet_data, "syndication_api", fallback_username=username)
+            if record is None:
+                continue
+            tweets.append(record)
             if len(tweets) >= limit:
                 break
 
-        return tweets
-
-    def _fetch_jina(self, username: str, limit: int = 10) -> List[Dict[str, Any]]:
-        target_url = f"https://x.com/{username}"
-        extracted = self.jina.extract(target_url)
-        if extracted.get("status") != "success":
-            return []
-
-        content = extracted.get("content", "")
-        if not content:
-            return []
-
-        blocks = [b.strip() for b in re.split(r"\n\s*---\s*\n|\n\s*\*\*\*\s*\n|\n(?=@[\w_]+)", content) if b.strip()]
-        tweets = []
-        for idx, block in enumerate(blocks[:limit]):
-            clean_body = clean_news_text(block)
-            tweets.append({
-                "tweet_id": f"jina_{username}_{idx}",
-                "title": f"Post by @{username}",
-                "author": username,
-                "username": username,
-                "text": clean_body,
-                "url": f"https://x.com/{username}",
-                "published_date": "",
-                "metrics": {"likes": 0, "retweets": 0, "replies": 0},
-                "backend": "jina_reader"
-            })
         return tweets
 
     def _fetch_cli(self, username: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -200,23 +157,24 @@ class TwitterChannel(SportsChannel):
             data = json.loads(proc.stdout)
             tweets = []
             for item in data if isinstance(data, list) else data.get("tweets", []):
-                tweets.append({
-                    "tweet_id": str(item.get("id", "")),
-                    "title": f"Tweet by @{username}",
-                    "author": item.get("author", username),
-                    "username": username,
-                    "text": clean_news_text(item.get("text", "")),
-                    "url": item.get("url", f"https://x.com/{username}"),
-                    "published_date": item.get("created_at", ""),
-                    "metrics": {
-                        "likes": item.get("likes", 0),
-                        "retweets": item.get("retweets", 0),
-                        "replies": item.get("replies", 0),
+                payload = {
+                    "id_str": str(item.get("id", "")),
+                    "text": item.get("text", ""),
+                    "created_at": item.get("created_at", ""),
+                    "favorite_count": item.get("likes", 0),
+                    "retweet_count": item.get("retweets", 0),
+                    "reply_count": item.get("replies", 0),
+                    "user": {
+                        "screen_name": item.get("username", username),
+                        "name": item.get("author", username),
                     },
-                    "backend": "twitter_cli"
-                })
+                }
+                record = normalize_tweet(payload, "twitter_cli")
+                if record is not None:
+                    tweets.append(record)
             return tweets
-        except Exception:
+        except Exception as exc:
+            logger.warning("CLI tweet parse failed: %s", exc)
             return []
 
     def get_user_tweets(
@@ -243,8 +201,6 @@ class TwitterChannel(SportsChannel):
                             tweets = self.graphql_client.search_tweets(f"from:{clean_user}", limit=limit)
             elif backend == "syndication_api":
                 tweets = self._fetch_syndication(clean_user, limit=limit)
-            elif backend == "jina_reader":
-                tweets = self._fetch_jina(clean_user, limit=limit)
             elif backend == "twitter_cli":
                 tweets = self._fetch_cli(clean_user, limit=limit)
 
@@ -277,39 +233,43 @@ class TwitterChannel(SportsChannel):
                             it["sport"] = sport
                         return items
 
-        search_url = f"https://x.com/search?q={urllib.parse.quote(query)}"
-        res = self.jina.extract(search_url)
-        if res.get("status") != "success":
-            return []
+        logger.warning("[twitter] search backend unavailable for %r", query)
+        return []
 
-        text = res.get("content", "")
-        chunks = [c.strip() for c in text.split("\n\n") if len(c.strip()) > 30]
-        items = []
-        for idx, chunk in enumerate(chunks[:limit]):
-            items.append({
-                "tweet_id": f"search_{idx}",
-                "title": f"Twitter search: {query}",
-                "author": "Twitter Search",
-                "username": "search",
-                "text": clean_news_text(chunk),
-                "url": search_url,
-                "published_date": "",
-                "sport": sport,
-                "backend": "jina_reader"
-            })
-        return items
+    def _fetch_tweet_by_id(self, tweet_id: str, sport: str = "football") -> Optional[Dict[str, Any]]:
+        """Fetches a single tweet by id through the public syndication endpoint."""
+        url = TWEET_RESULT_URL.format(tweet_id=tweet_id)
+        req = urllib.request.Request(url, headers={"User-Agent": WEB_USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        except Exception as exc:
+            logger.warning("Tweet %s lookup failed: %s", tweet_id, exc)
+            return None
+
+        record = normalize_tweet(payload, "syndication_api")
+        if record is None:
+            return None
+        record["sport"] = sport
+        return record
 
     def extract(self, url: str, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         match = re.search(r"(?:twitter\.com|x\.com)\/([^\/]+)(?:\/status\/(\d+))?", url)
         if match:
             username = match.group(1)
             tweet_id = match.group(2)
+            sport = (config or {}).get("sport", "football")
+            if tweet_id:
+                direct = self._fetch_tweet_by_id(tweet_id, sport=sport)
+                if direct is not None:
+                    return {"status": "success", "tweet": direct, "backend": direct.get("backend")}
+
             tweets = self.get_user_tweets(username, limit=10, config=config)
             if tweet_id:
                 for tw in tweets:
                     if tw.get("tweet_id") == tweet_id:
                         return {"status": "success", "tweet": tw, "backend": tw.get("backend")}
-            if tweets:
+            if tweets and not tweet_id:
                 return {"status": "success", "tweet": tweets[0], "backend": tweets[0].get("backend")}
 
         return {"status": "error", "message": "Failed to extract tweet from URL", "backend": None}

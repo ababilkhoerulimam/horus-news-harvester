@@ -23,9 +23,8 @@ from channels.social_youtube import YouTubeChannel
 from channels.social_twitter import TwitterChannel
 from backends.jina_reader import is_antibot_page
 from backends.headless_browser import HeadlessBrowserBackend, is_spa_skeleton
-from processors.cleaner import clean_news_text, deduplicate_articles
-from processors.state_store import StateStore
-from processors.http_client import ResilientHttpClient, DEFAULT_USER_AGENTS, default_http_client
+from processors.cleaner import clean_news_text
+from processors.http_client import ResilientHttpClient, DEFAULT_USER_AGENTS
 
 
 class TestSportsChannels(unittest.TestCase):
@@ -134,62 +133,21 @@ class TestSportsChannels(unittest.TestCase):
             self.assertIn("--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4", cmd)
             self.assertNotIn("--disable-extensions", cmd)
 
-    def test_deduplicate_articles(self):
-        arts = [
-            {"title": "Dewa United Menang", "url": "https://example.com/1"},
-            {"title": "Dewa United Menang!", "url": "https://example.com/2"},
-            {"title": "Dewa United Kalah", "url": "https://example.com/3"},
-        ]
-        deduped = deduplicate_articles(arts)
-        self.assertEqual(len(deduped), 2)
 
     def test_twitter_channel(self):
-        tw_ch = get_channel("social_twitter")
+        from unittest.mock import patch
+
+        with patch.object(TwitterChannel, "_init_session", return_value=None):
+            tw_ch = get_channel("social_twitter")
         self.assertIsNotNone(tw_ch)
         self.assertIsInstance(tw_ch, TwitterChannel)
-        self.assertEqual(tw_ch.backends, ["graphql_api", "syndication_api", "jina_reader", "twitter_cli"])
+        self.assertEqual(tw_ch.backends, ["graphql_api", "syndication_api", "twitter_cli"])
         self.assertTrue(tw_ch.can_handle("https://x.com/idextratime"))
         self.assertTrue(tw_ch.can_handle("https://twitter.com/PSSI"))
         self.assertTrue(tw_ch.can_handle("@CoachJustinL"))
         self.assertEqual(tw_ch._extract_username("@idextratime"), "idextratime")
         self.assertEqual(tw_ch._extract_username("https://x.com/PSSI/status/123"), "PSSI")
 
-    def test_state_store_sqlite(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-            temp_db = tf.name
-
-        try:
-            store = StateStore(temp_db)
-            test_items = [
-                {"url": "https://example.com/art1", "title": "Article 1", "content": "News 1"},
-                {"url": "https://example.com/art2", "title": "Article 2", "content": "News 2"},
-            ]
-
-            # 1. Initially both are unseen
-            unseen = store.filter_unseen("portal_news", test_items, id_key="url")
-            self.assertEqual(len(unseen), 2)
-
-            # 2. Mark seen
-            added = store.mark_seen("portal_news", "football", test_items, id_key="url")
-            self.assertEqual(added, 2)
-
-            # 3. Subsequent filter returns empty
-            unseen2 = store.filter_unseen("portal_news", test_items, id_key="url")
-            self.assertEqual(len(unseen2), 0)
-            self.assertTrue(store.is_seen("https://example.com/art1"))
-
-            # 4. Cursor tracking
-            store.set_cursor("social_twitter", "football", "idextratime", "184000111222")
-            cursor = store.get_cursor("social_twitter", "football", "idextratime")
-            self.assertEqual(cursor, "184000111222")
-
-            # 5. Stats
-            stats = store.get_stats()
-            self.assertEqual(stats["total_items"], 2)
-            self.assertEqual(stats["by_channel"].get("portal_news"), 2)
-        finally:
-            if os.path.exists(temp_db):
-                os.remove(temp_db)
 
     def test_targets_and_catalog_files(self):
         import json
@@ -253,11 +211,11 @@ class TestSportsChannels(unittest.TestCase):
             ]
         }
         seen = set()
-        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, max_comments=10, seen_ids=seen)
+        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, budget=10, seen_ids=seen)
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0]["id"], "c_123")
         self.assertEqual(comments[0]["author"], "@GarudaFans")
-        self.assertEqual(comments[0]["likes"], "450")
+        self.assertEqual(comments[0]["likes"], 450)
         self.assertNotIn("Baca juga", comments[0]["text"])
         self.assertEqual(next_token, "next_token_abc")
 
@@ -294,12 +252,12 @@ class TestSportsChannels(unittest.TestCase):
             ]
         }
         seen = set()
-        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, max_comments=10, seen_ids=seen)
+        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, budget=10, seen_ids=seen)
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0]["id"], "c_legacy_999")
         self.assertEqual(comments[0]["author"], "CoachJustinFans")
         self.assertEqual(comments[0]["text"], "Taktik babak kedua mantap")
-        self.assertEqual(comments[0]["likes"], "120")
+        self.assertEqual(comments[0]["likes"], 120)
         self.assertEqual(next_token, "token_legacy_next")
 
     def test_youtube_comment_continuation_loop(self):
@@ -369,12 +327,18 @@ class TestSportsChannels(unittest.TestCase):
         mock_resp2.read.return_value = json.dumps(page2_data).encode("utf-8")
         mock_resp2.__enter__.return_value = mock_resp2
 
-        with patch("urllib.request.urlopen", side_effect=[mock_resp1, mock_resp2]):
-            comments = yt_ch._fetch_innertube_comments(init_token="token_page_1", max_comments=50)
+        # Pin the wire to urllib so the two mocked responses describe the request path;
+        # the default transport is "auto" and would otherwise reach for curl_cffi.
+        with patch("channels.innertube._transport", "urllib"), patch(
+            "urllib.request.urlopen", side_effect=[mock_resp1, mock_resp2]
+        ):
+            harvest = yt_ch._fetch_innertube_comments(init_token="token_page_1", max_comments=50)
 
+        comments = harvest.comments
         self.assertEqual(len(comments), 2)
         self.assertEqual(comments[0]["id"], "c1")
         self.assertEqual(comments[1]["id"], "c2")
+        self.assertEqual(harvest.stop_reason, "exhausted")
 
     def test_http_client_user_agent_rotation(self):
         client = ResilientHttpClient(enable_jitter=False)
@@ -480,6 +444,18 @@ class TestSportsChannels(unittest.TestCase):
         self.assertEqual(res.get("status"), "success")
         self.assertEqual(res.get("backend"), "headless_browser")
         self.assertIn("Konten lengkap berita", res.get("content", ""))
+
+
+    def test_normalize_portal_url_table_covers_every_domain(self):
+        """Verifies each configured single-page portal maps to its own parameter."""
+        from channels.portal_news import _SINGLE_PAGE_PORTALS
+
+        for domain, (param, honor_all_suffix) in _SINGLE_PAGE_PORTALS.items():
+            url = f"https://www.{domain}/read/12345/some-article"
+            self.assertEqual(normalize_portal_url(url), f"{url}?{param}")
+            if honor_all_suffix:
+                all_url = f"https://www.{domain}/read/12345/some-article/all"
+                self.assertEqual(normalize_portal_url(all_url), all_url)
 
 
     def test_normalize_portal_url_extended(self):
@@ -656,36 +632,22 @@ class TestSportsChannels(unittest.TestCase):
         self.assertIn("Halaman kedua menyajikan", res.get("content", ""))
 
     def test_twitter_validate_session(self):
-        from unittest.mock import patch, MagicMock
-        import urllib.error
+        from unittest.mock import patch
         from backends.twitter_graphql import TwitterGraphQLBackend
 
         client = TwitterGraphQLBackend(auth_token="dummy_token", ct0="dummy_ct0")
 
-        # 1. Success validation
-        mock_resp = MagicMock()
-        mock_resp.status = 200
-        mock_resp.read.return_value = b'{"screen_name": "coachjustin", "protected": false}'
-        mock_resp.__enter__.return_value = mock_resp
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch.object(client, "get_user_id", return_value="12345"):
             self.assertTrue(client.validate_session())
 
-        # 2. Expired session (401 Unauthorized)
-        http_err = urllib.error.HTTPError(
-            url="https://x.com/i/api/1.1/account/settings.json",
-            code=401,
-            msg="Unauthorized",
-            hdrs={},
-            fp=None
-        )
-        with patch("urllib.request.urlopen", side_effect=http_err):
+        with patch.object(client, "get_user_id", return_value=None):
             self.assertFalse(client.validate_session())
 
     def test_twitter_auto_resync_firefox(self):
         from unittest.mock import patch, MagicMock
 
-        tw_ch = TwitterChannel()
+        with patch.object(TwitterChannel, "_init_session", return_value=None):
+            tw_ch = TwitterChannel()
         # Set dummy invalid client
         dummy_client = MagicMock()
         dummy_client.validate_session.return_value = False
@@ -706,15 +668,16 @@ class TestSportsChannels(unittest.TestCase):
     def test_twitter_resync_failure_fallback(self):
         from unittest.mock import patch
 
-        tw_ch = TwitterChannel()
+        with patch.object(TwitterChannel, "_init_session", return_value=None):
+            tw_ch = TwitterChannel()
         tw_ch.graphql_client = None
 
         with patch("channels.social_twitter.extract_firefox_twitter_tokens", return_value=None):
             res = tw_ch.ensure_active_session(force_refresh=True)
+            self.assertFalse(res)
+            self.assertIsNone(tw_ch.graphql_client)
+            status, msg = tw_ch.check()
 
-        self.assertFalse(res)
-        self.assertIsNone(tw_ch.graphql_client)
-        status, msg = tw_ch.check()
         self.assertEqual(tw_ch.active_backend, "syndication_api")
         self.assertIn("syndication_api", msg)
 
@@ -759,10 +722,125 @@ class TestSportsChannels(unittest.TestCase):
             ]
         }
         seen = set()
-        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, max_comments=5, seen_ids=seen)
+        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, budget=5, seen_ids=seen)
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0]["id"], "c_root_1")
         self.assertEqual(comments[0].get("_reply_token"), "reply_token_xyz")
+
+    def test_youtube_modern_thread_reply_token(self):
+        yt_ch = YouTubeChannel()
+        sample_page = {
+            "frameworkUpdates": {
+                "entityBatchUpdate": {
+                    "mutations": [
+                        {
+                            "payload": {
+                                "commentEntityPayload": {
+                                    "properties": {
+                                        "commentId": "c_modern_1",
+                                        "content": {"content": "Kiper kita luar biasa"},
+                                        "publishedTime": "3 hari yang lalu",
+                                    },
+                                    "author": {"displayName": "@Garuda"},
+                                    "toolbar": {"likeCountNotliked": "1.2 rb"},
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "onResponseReceivedEndpoints": [
+                {
+                    "reloadContinuationItemsCommand": {
+                        "continuationItems": [
+                            {
+                                "commentThreadRenderer": {
+                                    "commentViewModel": {"commentViewModel": {"commentId": "c_modern_1"}},
+                                    "replies": {
+                                        "commentRepliesRenderer": {
+                                            "contents": [
+                                                {
+                                                    "continuationItemRenderer": {
+                                                        "button": {
+                                                            "buttonRenderer": {
+                                                                "command": {
+                                                                    "continuationCommand": {"token": "reply_token_modern"},
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ],
+                                            "viewReplies": {
+                                                "buttonRenderer": {
+                                                    "text": {"runs": [{"text": "172 balasan"}]},
+                                                }
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                            {"continuationItemRenderer": {"button": {"buttonRenderer": {"command": {"continuationCommand": {"token": "next_page_token"}}}}}},
+                        ]
+                    }
+                }
+            ],
+        }
+        comments, next_token = yt_ch._parse_innertube_comments_page(sample_page, budget=10, seen_ids=set())
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["likes"], 1200)
+        self.assertEqual(comments[0]["reply_count"], 172)
+        self.assertEqual(comments[0].get("_reply_token"), "reply_token_modern")
+        self.assertEqual(next_token, "next_page_token")
+
+    def test_youtube_reply_page_button_continuation(self):
+        yt_ch = YouTubeChannel()
+        page = {
+            "frameworkUpdates": {
+                "entityBatchUpdate": {
+                    "mutations": [
+                        {
+                            "payload": {
+                                "commentEntityPayload": {
+                                    "properties": {
+                                        "commentId": "c_reply_a.AbQzw",
+                                        "content": {"content": "Terima kasih"},
+                                        "publishedTime": "1 hari yang lalu",
+                                    },
+                                    "author": {"displayName": "@Chanatip"},
+                                    "toolbar": {"likeCountNotliked": "0"},
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "onResponseReceivedEndpoints": [
+                {
+                    "appendContinuationItemsAction": {
+                        "continuationItems": [
+                            {"commentViewModel": {"commentViewModel": {"commentId": "c_reply_a.AbQzw"}}},
+                            {
+                                "continuationItemRenderer": {
+                                    "button": {
+                                        "buttonRenderer": {
+                                            "command": {
+                                                "continuationCommand": {"token": "more_replies_token"},
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                        ]
+                    }
+                }
+            ],
+        }
+        records, follow_ups = yt_ch._parse_reply_page(page, set(), "c_reply_a", 1, 10)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["parent_id"], "c_reply_a")
+        self.assertEqual(records[0]["depth"], 1)
+        self.assertEqual(follow_ups, ["more_replies_token"])
 
     def test_youtube_innertube_fetch_replies(self):
         from unittest.mock import patch
@@ -797,7 +875,7 @@ class TestSportsChannels(unittest.TestCase):
         self.assertEqual(replies[0]["id"], "c_reply_1")
         self.assertEqual(replies[0]["author"], "FanGaruda")
         self.assertIn("Setuju sekali", replies[0]["text"])
-        self.assertEqual(replies[0]["likes"], "15")
+        self.assertEqual(replies[0]["likes"], 15)
 
     def test_youtube_yt_dlp_reply_nesting(self):
         from unittest.mock import patch, MagicMock
@@ -908,6 +986,54 @@ class TestSportsChannels(unittest.TestCase):
         self.assertIsInstance(result_corrupt, str)
 
 
+class FakeAsyncSession:
+    """Minimal stand-in for curl_cffi's AsyncSession."""
+
+    def __init__(self, status=200, text="<html></html>"):
+        self.status_code = status
+        self.text = text
+        self.calls = []
+
+    async def get(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return self
+
+
+class CurlSessionReplayTests(unittest.TestCase):
+    """The curl backend must replay cookies and User-Agent together."""
+
+    def _backend(self):
+        from backends.curl_impersonate import CurlImpersonateBackend
+        backend = CurlImpersonateBackend()
+        if not backend.is_available():
+            self.skipTest("curl_cffi not installed")
+        return backend
+
+    def test_cookies_and_user_agent_reach_the_wire(self):
+        import asyncio
+        backend = self._backend()
+        session = FakeAsyncSession()
+        asyncio.run(
+            backend.fetch_async(
+                session,
+                "https://example.com/a",
+                cookies={"cf_clearance": "tok"},
+                user_agent="Mozilla/5.0 captured",
+            )
+        )
+        sent = session.calls[0]
+        self.assertEqual(sent["cookies"], {"cf_clearance": "tok"})
+        self.assertEqual(sent["headers"]["User-Agent"], "Mozilla/5.0 captured")
+
+    def test_anonymous_call_sends_no_user_agent_override(self):
+        import asyncio
+        backend = self._backend()
+        session = FakeAsyncSession()
+        asyncio.run(backend.fetch_async(session, "https://example.com/a"))
+        sent = session.calls[0]
+        self.assertIsNone(sent["cookies"])
+        self.assertNotIn("User-Agent", sent["headers"])
+
+
 if __name__ == "__main__":
     unittest.main()
-

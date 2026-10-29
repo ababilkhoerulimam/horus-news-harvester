@@ -10,7 +10,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

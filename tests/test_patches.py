@@ -10,12 +10,12 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from backends.firefox_cookies import extract_firefox_twitter_tokens, find_firefox_profiles
 from channels.social_youtube import YouTubeChannel
 from processors.backup import create_backup_archive, run_backup
-from processors.cleaner import deduplicate_jsonl_file, normalize_timestamp, _load_existing_ids
+from processors.cleaner import deduplicate_jsonl_file, normalize_timestamp
 
 
 class TestSixArchitecturePatches(unittest.TestCase):
@@ -32,22 +32,6 @@ class TestSixArchitecturePatches(unittest.TestCase):
     # Patch 1 & 5: Deduplication & Fast Set Lookup
     # =========================================================================
 
-    def test_load_existing_ids_from_jsonl(self):
-        """Verifies _load_existing_ids quickly extracts IDs from a JSONL file."""
-        test_file = self.base_path / "sample.jsonl"
-        with open(test_file, "w", encoding="utf-8") as f:
-            f.write(json.dumps({"url": "https://example.com/1", "title": "Art 1"}) + "\n")
-            f.write(json.dumps({"url": "https://example.com/2", "title": "Art 2"}) + "\n")
-            f.write(json.dumps({"tweet_id": "tw_123", "text": "Tweet"}) + "\n")
-
-        ids_by_url = _load_existing_ids(test_file, id_key="url")
-        self.assertIn("https://example.com/1", ids_by_url)
-        self.assertIn("https://example.com/2", ids_by_url)
-        self.assertIn("tw_123", ids_by_url)
-
-        # Empty / non-existent file returns empty set
-        empty_ids = _load_existing_ids(self.base_path / "non_existent.jsonl")
-        self.assertEqual(len(empty_ids), 0)
 
     def test_deduplicate_jsonl_file_in_place(self):
         """Verifies deduplicate_jsonl_file strips duplicate entries and retains unique records."""
@@ -182,7 +166,7 @@ class TestSixArchitecturePatches(unittest.TestCase):
             }]
         }).encode("utf-8")
 
-        with patch("channels.social_youtube.default_http_client.fetch") as mock_fetch:
+        with patch("channels.innertube.default_http_client.fetch") as mock_fetch:
             mock_fetch.side_effect = [
                 (200, mock_body_p1, {}),
                 (200, mock_body_p2, {}),

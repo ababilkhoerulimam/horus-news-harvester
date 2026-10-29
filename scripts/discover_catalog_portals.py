@@ -10,7 +10,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB
-from processors.http_client import default_http_client, DEFAULT_PROXIES_FILE
+from processors.cli_support import configure_proxy
 from backends.curl_impersonate import CurlImpersonateBackend
 from scripts.sitemap_backfill import (
     DEFAULT_FOOTBALL_KEYWORDS,
@@ -40,10 +40,9 @@ def run_catalog_discovery(
 ) -> Dict[str, Any]:
     frontier = CrawlFrontier(frontier_db)
 
-    if DEFAULT_PROXIES_FILE.exists():
-        loaded = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
-        if loaded:
-            logger.info(f"[*] Auto-loaded {loaded} proxies from '{DEFAULT_PROXIES_FILE}'")
+    loaded, proxy_source = configure_proxy()
+    if loaded:
+        logger.info(f"[*] Auto-loaded {loaded} proxies from '{proxy_source}'")
 
     cat_path = Path(catalog_file)
     if not cat_path.exists():

@@ -1,0 +1,17 @@
+{
+  "detik.com": {
+    "content": ["//article"],
+    "min_chars": 300,
+    "_verified": "2026-10-29, 405 -> 4586 chars on sport.detik.com article"
+  },
+  "kompas.com": {
+    "content": ["//div[contains(@class,'read__content')]"],
+    "min_chars": 300,
+    "_verified": "2026-10-29, 771 -> 6405 chars on bola.kompas.com article"
+  },
+  "jawapos.com": {
+    "next_data": "props.pageProps.article.content",
+    "min_chars": 300,
+    "_verified": "2026-10-29, 1109 -> 5026 chars on jawapos.com article"
+  }
+}

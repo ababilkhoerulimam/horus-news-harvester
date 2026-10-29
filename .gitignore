@@ -221,6 +221,7 @@ __marimo__/
 
 # Harvester state and credentials
 config/twitter_session.json
+config/sessions/
 config/proxies.txt
 data/state/
 data/raw/

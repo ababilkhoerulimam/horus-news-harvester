@@ -1,15 +1,56 @@
 """
 Resilient HTTP Client with Pluggable Proxy Pool, User-Agent Rotation, and Request Jitter.
-Uses Python standard library (urllib.request) with zero external dependencies.
+
+The default transport is the Python standard library (urllib.request) with zero external
+dependencies. An optional curl_cffi transport reuses one browser-fingerprinted connection
+pool per thread, which removes the TLS handshake that urllib pays on every request.
 """
 
-import os
 import random
+import threading
 import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    from curl_cffi import requests as curl_requests
+
+    HAS_CURL_CFFI = True
+except ImportError:  # optional dependency, see pyproject extra "advanced-stealth"
+    curl_requests = None
+    HAS_CURL_CFFI = False
+
+
+# Transport-level failures that mean "this proxy is unusable", as opposed to a target
+# error such as 429 or 403 where rotating the proxy is still useful.
+_PROXY_ERROR_INDICATORS = (
+    "net::err_proxy",
+    "net::err_tunnel",
+    "connection refused",
+    "connection reset",
+    "connection timed out",
+    "failed to connect",
+    "could not resolve proxy",
+)
+
+
+def is_proxy_error(error: BaseException) -> bool:
+    """True when the failure points at the proxy rather than the target."""
+    message = str(error).lower()
+    return any(indicator in message for indicator in _PROXY_ERROR_INDICATORS)
+
+
+def backoff_seconds(attempts: int, retry_after: Optional[str] = None) -> float:
+    """Sleep length for a 429/503 retry.
+
+    Honours Retry-After when it is a plain integer count of seconds, otherwise uses
+    capped exponential growth plus jitter.
+    """
+    if retry_after and retry_after.strip().isdigit():
+        return min(45.0, float(retry_after.strip()))
+    return min(30.0, 5.0 * (2 ** (attempts - 1))) + random.uniform(0.5, 1.5)
 
 
 DEFAULT_USER_AGENTS = [
@@ -54,9 +95,11 @@ class ResilientHttpClient:
         self.min_jitter = min_jitter
         self.max_jitter = max_jitter
         self.enable_jitter = enable_jitter
+        self._pinned_user_agent: Optional[str] = None
         self._proxies: List[str] = []
         self._failed_proxies: set = set()
         self._single_proxy: Optional[str] = None
+        self._curl_local = threading.local()
         if self.proxies_file:
             self.reload_proxies()
 
@@ -125,8 +168,25 @@ class ResilientHttpClient:
         """Temporarily marks an unresponsive proxy as failed."""
         self._failed_proxies.add(proxy)
 
+    def set_user_agent(self, user_agent: Optional[str]) -> Optional[str]:
+        """Pins one User-Agent for every request, or clears the pin when None.
+
+        Rotation is the right default for anonymous scraping, but it is the wrong
+        choice for a cookie session: curl_cffi already pins the TLS fingerprint to
+        Chrome 124, and sending five different browser strings over one Chrome
+        fingerprint is a louder bot signal than sending the same one every time.
+        """
+        self._pinned_user_agent = (user_agent or "").strip() or None
+        return self._pinned_user_agent
+
+    def pinned_user_agent(self) -> Optional[str]:
+        """Returns the pinned User-Agent, or None when rotation is active."""
+        return self._pinned_user_agent
+
     def get_random_user_agent(self) -> str:
         """Selects a modern realistic desktop browser User-Agent."""
+        if self._pinned_user_agent:
+            return self._pinned_user_agent
         return random.choice(DEFAULT_USER_AGENTS)
 
     def apply_jitter(self, min_sec: Optional[float] = None, max_sec: Optional[float] = None) -> None:
@@ -146,16 +206,23 @@ class ResilientHttpClient:
         timeout: float = 6.0,
         use_jitter: Optional[bool] = None,
         max_retries: int = 1,
+        transport: str = "urllib",
     ) -> Tuple[int, bytes, Dict[str, str]]:
         """
         Executes HTTP request with proxy rotation, UA randomization, jitter,
         and adaptive exponential backoff on HTTP 429/503.
         Returns (status_code, body_bytes, headers_dict).
+
+        transport selects the wire implementation:
+          "urllib" - standard library, new TLS handshake per request (default)
+          "curl"   - curl_cffi, pooled and browser-fingerprinted per thread
+          "auto"   - curl when curl_cffi is installed, otherwise urllib
         """
         should_jitter = self.enable_jitter if use_jitter is None else use_jitter
         if should_jitter:
             self.apply_jitter()
 
+        use_curl = self._resolve_transport(transport)
         base_headers = dict(headers or {})
         attempts = 0
         last_error = None
@@ -169,36 +236,39 @@ class ResilientHttpClient:
 
             current_proxy = self.get_active_proxy()
 
-            # Configure request execution (proxy vs direct)
-            try:
-                req = urllib.request.Request(url, data=data, headers=req_headers)
-                if current_proxy:
-                    proxy_handler = urllib.request.ProxyHandler({
-                        "http": current_proxy,
-                        "https": current_proxy,
-                    })
-                    opener = urllib.request.build_opener(proxy_handler)
-                    resp_ctx = opener.open(req, timeout=timeout)
-                else:
-                    resp_ctx = urllib.request.urlopen(req, timeout=timeout)
+            if use_curl:
+                try:
+                    status, body, resp_headers = self._send_curl(
+                        url, data, req_headers, timeout, current_proxy
+                    )
+                except Exception as e:
+                    if current_proxy and is_proxy_error(e):
+                        self.mark_proxy_failed(current_proxy)
+                    last_error = e
+                    if attempts <= max_retries:
+                        time.sleep(random.uniform(1.0, 2.5))
+                        continue
+                    break
 
-                with resp_ctx as resp:
-                    raw_status = getattr(resp, "status", None)
-                    status = raw_status if isinstance(raw_status, int) else 200
-                    body = resp.read()
-                    resp_headers = dict(resp.headers.items()) if hasattr(resp, "headers") else {}
-                    return status, body, resp_headers
+                if status in (429, 503) and attempts <= max_retries:
+                    retry_after = resp_headers.get("Retry-After") or resp_headers.get("retry-after")
+                    time.sleep(backoff_seconds(attempts, retry_after))
+                    if current_proxy:
+                        self.mark_proxy_failed(current_proxy)
+                    last_error = status
+                    continue
+                if status >= 400:
+                    return status, b"", resp_headers
+                return status, body, resp_headers
+
+            try:
+                return self._send_urllib(url, data, req_headers, timeout, current_proxy)
 
             except urllib.error.HTTPError as he:
-                # ponytail: Adaptive backoff on 429 Too Many Requests / 503 Service Unavailable.
+                # Adaptive backoff on 429 Too Many Requests / 503 Service Unavailable.
                 if he.code in (429, 503) and attempts <= max_retries:
                     retry_after_str = he.headers.get("Retry-After") if hasattr(he, "headers") else None
-                    if retry_after_str and retry_after_str.strip().isdigit():
-                        sleep_sec = min(45.0, float(retry_after_str.strip()))
-                    else:
-                        sleep_sec = min(30.0, 5.0 * (2 ** (attempts - 1))) + random.uniform(0.5, 1.5)
-
-                    time.sleep(sleep_sec)
+                    time.sleep(backoff_seconds(attempts, retry_after_str))
                     if current_proxy:
                         self.mark_proxy_failed(current_proxy)
                     last_error = he
@@ -206,7 +276,7 @@ class ResilientHttpClient:
                 return he.code, b"", {}
 
             except Exception as e:
-                if current_proxy:
+                if current_proxy and is_proxy_error(e):
                     self.mark_proxy_failed(current_proxy)
                 last_error = e
                 if attempts <= max_retries:
@@ -215,6 +285,81 @@ class ResilientHttpClient:
                 break
 
         return 500, b"", {}
+
+    def _resolve_transport(self, transport: str) -> bool:
+        """Decides whether this request goes over curl_cffi."""
+        if transport == "curl":
+            return HAS_CURL_CFFI
+        if transport == "auto":
+            return HAS_CURL_CFFI
+        return False
+
+    def _send_urllib(
+        self,
+        url: str,
+        data: Optional[bytes],
+        headers: Dict[str, str],
+        timeout: float,
+        proxy: Optional[str],
+    ) -> Tuple[int, bytes, Dict[str, str]]:
+        """One attempt over urllib. Raises HTTPError so the caller keeps its retry rules."""
+        req = urllib.request.Request(url, data=data, headers=headers)
+        if proxy:
+            proxy_handler = urllib.request.ProxyHandler({
+                "http": proxy,
+                "https": proxy,
+            })
+            opener = urllib.request.build_opener(proxy_handler)
+            resp_ctx = opener.open(req, timeout=timeout)
+        else:
+            resp_ctx = urllib.request.urlopen(req, timeout=timeout)
+
+        with resp_ctx as resp:
+            raw_status = getattr(resp, "status", None)
+            status = raw_status if isinstance(raw_status, int) else 200
+            body = resp.read()
+            resp_headers = dict(resp.headers.items()) if hasattr(resp, "headers") else {}
+            return status, body, resp_headers
+
+    def _curl_session(self) -> Any:
+        """Returns this thread's pooled curl_cffi session, creating it on first use."""
+        session = getattr(self._curl_local, "session", None)
+        if session is None:
+            session = curl_requests.Session(
+                impersonate="chrome124",
+                headers={
+                    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Sec-Ch-Ua-Platform": '"Windows"',
+                },
+            )
+            self._curl_local.session = session
+        return session
+
+    def _send_curl(
+        self,
+        url: str,
+        data: Optional[bytes],
+        headers: Dict[str, str],
+        timeout: float,
+        proxy: Optional[str],
+    ) -> Tuple[int, bytes, Dict[str, str]]:
+        """One attempt over a pooled curl_cffi session. HTTP errors come back as a status."""
+        session = self._curl_session()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        method = "POST" if data is not None else "GET"
+        resp = session.request(
+            method,
+            url,
+            data=data,
+            headers=headers,
+            timeout=timeout,
+            proxies=proxies,
+        )
+        body = resp.content or b""
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        resp_headers = dict(resp.headers.items()) if resp.headers else {}
+        return int(resp.status_code), body, resp_headers
 
 
 # Singleton instance for simple import

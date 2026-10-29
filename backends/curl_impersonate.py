@@ -6,7 +6,7 @@ Inspired by Scrapling fetcher architecture.
 """
 
 import threading
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 try:
     from curl_cffi import requests as curl_requests
@@ -88,25 +88,35 @@ class CurlImpersonateBackend:
         self,
         session: Any,
         url: str,
-        proxy: Optional[str] = None
+        proxy: Optional[str] = None,
+        cookies: Optional[Dict[str, str]] = None,
+        user_agent: Optional[str] = None,
     ) -> Tuple[int, str]:
         """
         Fetches URL asynchronously using an active HTTP/2 AsyncSession.
         Returns (status_code, html_text).
+
+        cookies and user_agent replay a stored browser session. They belong together:
+        a session's cookies over a different User-Agent is not a client any browser
+        would produce, and WAFs score it worse than sending no cookies at all.
         """
         if not HAS_CURL_CFFI or session is None:
             return 0, ""
 
         proxies = {"http": proxy, "https": proxy} if proxy else None
+        headers = {
+            "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+        }
+        if user_agent:
+            headers["User-Agent"] = user_agent
         try:
             resp = await session.get(
                 url,
                 timeout=self.timeout,
                 proxies=proxies,
-                headers={
-                    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Sec-Ch-Ua-Platform": '"Windows"',
-                },
+                headers=headers,
+                cookies=cookies,
             )
             return resp.status_code, resp.text
         except Exception:

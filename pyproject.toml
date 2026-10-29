@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "national-news-intelligence-harvester"
-version = "0.2.0"
+name = "horus-news-harvester"
+version = "0.3.0"
 description = "Topic-Agnostic National News Intelligence Harvester for Indonesian Media"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -52,4 +52,5 @@ all = [
 ]
 
 [project.scripts]
+horus = "cli:main"
 nnih = "cli:main"

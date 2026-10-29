@@ -8,9 +8,7 @@ from __future__ import annotations
 import json
 import gzip
 import logging
-import multiprocessing
 from multiprocessing import Process
-import os
 import re
 import sys
 import threading
@@ -28,16 +26,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backends.curl_impersonate import CurlImpersonateBackend
-from channels.portal_news import (
-    PortalNewsChannel,
-    normalize_portal_url,
-    extract_clean_article_text,
-    is_cloudflare_challenge,
-)
+from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.ad_filter import is_ad_domain
-from processors.cleaner import clean_news_text, normalize_timestamp
+from processors.cleaner import normalize_timestamp
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB, interleave_by_portal
+from processors.fetch_pipeline import REASON_TOO_SHORT, fetch_article
+from processors.portal_catalog import wp_api_base_for
 from processors.http_client import default_http_client
+from processors.record_writer import build_news_record
+from processors.worker_loop import run_async_worker
 
 logger = logging.getLogger("sitemap_backfill")
 
@@ -287,6 +284,19 @@ def _decompress_sitemap_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _find_local(parent: ET.Element, names: List[str]) -> Optional[ET.Element]:
+    """Returns the first descendant whose local tag name matches a candidate.
+
+    Matches on the local name so Google News extensions resolve regardless of
+    the namespace prefix they use, and compares against None because
+    Element.__bool__ is False for text-only nodes such as <news:title>.
+    """
+    for el in parent.iter():
+        if el.tag.split('}')[-1] in names:
+            return el
+    return None
+
+
 def parse_sitemap_xml(
     xml_content: str,
     filter_keywords: Optional[List[str]] = None
@@ -334,12 +344,12 @@ def parse_sitemap_xml(
 
         # Title from news sitemap extension if available
         title = ""
-        news_el = url_el.find(f".//{ns}news") or url_el.find(".//news")
+        news_el = _find_local(url_el, ["news"])
         if news_el is not None:
-            title_el = news_el.find(f".//{ns}title") or news_el.find(".//title")
+            title_el = _find_local(news_el, ["title"])
             if title_el is not None and title_el.text:
                 title = title_el.text.strip()
-            pub_date_el = news_el.find(f".//{ns}publication_date") or news_el.find(".//publication_date")
+            pub_date_el = _find_local(news_el, ["publication_date", "pubdate"])
             if pub_date_el is not None and pub_date_el.text and not lastmod:
                 lastmod = pub_date_el.text.strip()
 
@@ -820,141 +830,45 @@ async def _async_backfill_worker_loop(
     channel = PortalNewsChannel()
     frontier = CrawlFrontier(frontier_db, batch_size=50)
     session = curl_backend.create_async_session()
-    extracted_total = 0
 
-    part_path = Path(output_part_file)
-    part_path.parent.mkdir(parents=True, exist_ok=True)
-
-    file_lock = asyncio.Lock()
-    db_lock = asyncio.Lock()
-
-    async def _fetch_single(cand: Dict[str, Any], out_handle):
-        nonlocal extracted_total
-        u = cand["url"]
-        norm_u = normalize_portal_url(u)
-        try:
-            # 1. Primary: Direct fetch (fast, ~0.15s)
-            status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
-
-            # Fast-fail on HTTP 404: page deleted or non-existent on origin
-            if status == 404:
-                async with db_lock:
-                    frontier.mark_failed(u, error="HTTP 404 Not Found")
-                return
-
-            # Fallback to rotating proxy if WAF/blocked/challenge
-            if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
-                proxy = default_http_client.get_active_proxy()
-                if proxy:
-                    status, html = await curl_backend.fetch_async(session, norm_u, proxy=proxy)
-
-            if status == 200 and html and not is_cloudflare_challenge(status, html):
-                content = extract_clean_article_text(html)
-                if len(content) >= min_content_length:
-                    record = {
-                        "url": u,
-                        "title": cand.get("title") or "",
-                        "published_date": cand.get("published_date") or "",
-                        "archive_date": cand.get("archive_date", ""),
-                        "content": content,
-                        "source": urlparse(u).netloc,
-                        "backend": "curl_impersonate",
-                        "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    }
-                    async with file_lock:
-                        out_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-                        extracted_total += 1
-                        curr = extracted_total
-
-                    async with db_lock:
-                        frontier.mark_completed(u)
-
-                    if curr % 50 == 0:
-                        async with file_lock:
-                            out_handle.flush()
-                        async with db_lock:
-                            frontier.flush()
-                        logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
-                    return
-
-            # 2. Secondary fallback via thread pool (for complex CMS or fallback)
-            res = await asyncio.to_thread(channel.extract, u, {"disable_headless": True})
-            if res.get("status") == "success" and len(res.get("content", "")) >= min_content_length:
-                record = {
-                    "url": u,
-                    "title": cand.get("title") or res.get("title") or "",
-                    "published_date": cand.get("published_date") or res.get("published_date") or "",
-                    "archive_date": cand.get("archive_date", ""),
-                    "content": res.get("content", ""),
-                    "source": urlparse(u).netloc,
-                    "backend": res.get("backend", "direct_http"),
-                    "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                }
-                async with file_lock:
-                    out_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    extracted_total += 1
-                    curr = extracted_total
-
-                async with db_lock:
-                    frontier.mark_completed(u)
-
-                if curr % 50 == 0:
-                    async with file_lock:
-                        out_handle.flush()
-                    async with db_lock:
-                        frontier.flush()
-                    logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
-                return
-
-            async with db_lock:
-                frontier.mark_failed(u, error="Content length below minimum threshold")
-        except Exception as e:
-            async with db_lock:
-                frontier.mark_failed(u, error=str(e))
+    async def _process_item(cand: Dict[str, Any], sink) -> None:
+        url = cand["url"]
+        norm_url = normalize_portal_url(url)
+        result = await fetch_article(
+            session,
+            curl_backend,
+            channel,
+            norm_url,
+            min_content_length=min_content_length,
+            wp_api_base=wp_api_base_for(urlparse(norm_url).netloc.replace("www.", "")),
+        )
+        if result.content is None:
+            await sink.fail(url, result.reason)
+            return
+        await sink.emit(build_news_record(
+            url=url,
+            title=cand.get("title") or result.title,
+            published_date=cand.get("published_date") or result.published_date,
+            archive_date=cand.get("archive_date", ""),
+            content=result.content,
+            backend=result.backend,
+            quality=result.quality,
+            content_chars=result.content_chars,
+        ))
 
     try:
-        with open(part_path, "a", encoding="utf-8") as out_f:
-            while extracted_total < limit_per_worker:
-                if worker_id > 0:
-                    await asyncio.sleep(0.05 * worker_id)
-
-                batch = frontier.claim_pending_batch(limit=concurrency * 4, portal=portal_filter)
-                if not batch:
-                    break
-
-                if not portal_filter:
-                    batch = interleave_by_portal(batch)
-
-                queue: asyncio.Queue = asyncio.Queue()
-                for item in batch:
-                    queue.put_nowait(item)
-
-                domain_semaphores: Dict[str, asyncio.Semaphore] = {}
-
-                async def _worker():
-                    while not queue.empty():
-                        try:
-                            item = queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                        u = item.get("url", "")
-                        domain = urlparse(u).netloc.replace("www.", "").lower()
-                        is_slow = any(s in domain for s in SLOW_PORTAL_DOMAINS)
-                        if is_slow:
-                            if domain not in domain_semaphores:
-                                domain_semaphores[domain] = asyncio.Semaphore(2)
-                            async with domain_semaphores[domain]:
-                                await _fetch_single(item, out_f)
-                                await asyncio.sleep(0.08)
-                        else:
-                            await _fetch_single(item, out_f)
-                        queue.task_done()
-
-                worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
-                await asyncio.gather(*worker_tasks)
-                out_f.flush()
-                frontier.flush()
-                logger.info(f"[Core-{worker_id}] Batch completed | Extracted: {extracted_total} articles")
+        await run_async_worker(
+            worker_id=worker_id,
+            frontier=frontier,
+            output_part_file=output_part_file,
+            process_item=_process_item,
+            concurrency=concurrency,
+            limit_per_worker=limit_per_worker,
+            label=f"[Core-{worker_id}]",
+            portal_filter=portal_filter,
+            startup_stagger=0.05,
+            slow_domains=SLOW_PORTAL_DOMAINS,
+        )
     finally:
         frontier.flush()
         frontier.close()
@@ -963,7 +877,6 @@ async def _async_backfill_worker_loop(
                 await session.close()
             except Exception:
                 pass
-
 
 def _backfill_worker_process_entrypoint(
     worker_id: int,
@@ -1175,127 +1088,54 @@ def run_sitemap_backfill(
             async def _async_backfill_runner():
                 nonlocal written_count
                 session = curl_backend.create_async_session()
-                queue: asyncio.Queue = asyncio.Queue()
-                for cand in batch:
-                    queue.put_nowait(cand)
 
-                file_lock = asyncio.Lock()
-                db_lock = asyncio.Lock()
+                async def _process_item(cand: Dict[str, Any], sink) -> None:
+                    url = cand["url"]
+                    norm_url = normalize_portal_url(url)
+                    result = await fetch_article(
+                        session,
+                        curl_backend,
+                        channel,
+                        norm_url,
+                        min_content_length=min_content_length,
+                        wp_api_base=wp_api_base_for(urlparse(norm_url).netloc.replace("www.", "")),
+                    )
+                    if result.content is None:
+                        await sink.fail(url, result.reason)
+                        return
+                    await sink.emit(build_news_record(
+                        url=url,
+                        title=cand.get("title") or result.title,
+                        published_date=cand.get("published_date") or result.published_date,
+                        archive_date=cand.get("archive_date", ""),
+                        content=result.content,
+                        backend=result.backend,
+                        quality=result.quality,
+                        content_chars=result.content_chars,
+                    ))
 
-                with open(out_path, "a", encoding="utf-8") as f:
-                    async def _fetch_single(cand: Dict[str, Any]):
-                        nonlocal written_count
-                        u = cand["url"]
-                        norm_u = normalize_portal_url(u)
-                        try:
-                            # 1. Primary: Direct fetch (fast, ~0.15s)
-                            status, html = await curl_backend.fetch_async(session, norm_u, proxy=None)
+                pending = [batch]
 
-                            # Fast-fail on HTTP 404: page deleted or non-existent on origin
-                            if status == 404:
-                                async with db_lock:
-                                    frontier.mark_failed(u, error="HTTP 404 Not Found")
-                                return
+                def _claim(_limit: int):
+                    return pending.pop() if pending else []
 
-                            # Check if Cloudflare / rate limited / blocked -> Fallback to rotating proxy
-                            if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
-                                proxy = default_http_client.get_active_proxy()
-                                if proxy:
-                                    status, html = await curl_backend.fetch_async(session, norm_u, proxy=proxy)
-
-                            if status == 200 and html and not is_cloudflare_challenge(status, html):
-                                content = extract_clean_article_text(html)
-                                if len(content) >= min_content_length:
-                                    record = {
-                                        "url": u,
-                                        "title": cand.get("title") or "",
-                                        "published_date": cand.get("published_date") or "",
-                                        "archive_date": cand.get("archive_date", ""),
-                                        "content": content,
-                                        "source": urlparse(u).netloc,
-                                        "backend": "curl_impersonate",
-                                        "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                    }
-                                    async with file_lock:
-                                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                                        written_count += 1
-                                        current_written = written_count
-
-                                    async with db_lock:
-                                        frontier.mark_completed(u)
-
-                                    if current_written % 50 == 0:
-                                        async with file_lock:
-                                            f.flush()
-                                        async with db_lock:
-                                            frontier.flush()
-                                        logger.info(f"[+] Harvested {current_written}/{len(batch)} candidate articles -> {out_path.name}")
-                                    return
-
-                            # 2. Secondary fallback via thread pool (for complex CMS or fallback)
-                            res = await asyncio.to_thread(channel.extract, u, {"disable_headless": True})
-                            if res.get("status") == "success" and len(res.get("content", "")) >= min_content_length:
-                                record = {
-                                    "url": u,
-                                    "title": cand.get("title") or res.get("title") or "",
-                                    "published_date": cand.get("published_date") or res.get("published_date") or "",
-                                    "archive_date": cand.get("archive_date", ""),
-                                    "content": res.get("content", ""),
-                                    "source": urlparse(u).netloc,
-                                    "backend": res.get("backend", "direct_http"),
-                                    "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                }
-                                async with file_lock:
-                                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                                    written_count += 1
-                                    current_written = written_count
-
-                                async with db_lock:
-                                    frontier.mark_completed(u)
-
-                                if current_written % 50 == 0:
-                                    async with file_lock:
-                                        f.flush()
-                                    async with db_lock:
-                                        frontier.flush()
-                                    logger.info(f"[+] Harvested {current_written}/{len(batch)} candidate articles -> {out_path.name}")
-                                return
-
-                            async with db_lock:
-                                frontier.mark_failed(u, error="Content length below minimum threshold")
-                        except Exception as e:
-                            async with db_lock:
-                                frontier.mark_failed(u, error=str(e))
-
-                    domain_semaphores: Dict[str, asyncio.Semaphore] = {}
-
-                    async def _worker():
-                        while not queue.empty():
-                            try:
-                                cand = queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
-                            u = cand.get("url", "")
-                            domain = urlparse(u).netloc.replace("www.", "").lower()
-                            is_slow = any(s in domain for s in SLOW_PORTAL_DOMAINS)
-                            if is_slow:
-                                if domain not in domain_semaphores:
-                                    domain_semaphores[domain] = asyncio.Semaphore(2)
-                                async with domain_semaphores[domain]:
-                                    await _fetch_single(cand)
-                                    await asyncio.sleep(0.08)
-                            else:
-                                await _fetch_single(cand)
-                            queue.task_done()
-
-                    worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
-                    await asyncio.gather(*worker_tasks)
-                    f.flush()
-                    frontier.flush()
-                    logger.info(f"[+] Final batch flush | Total harvested: {written_count}/{len(batch)} articles -> {out_path.name}")
-
-                if session:
-                    await session.close()
+                try:
+                    written_count = await run_async_worker(
+                        worker_id=0,
+                        frontier=frontier,
+                        output_part_file=str(out_path),
+                        process_item=_process_item,
+                        concurrency=concurrency,
+                        limit_per_worker=batch_limit,
+                        label="[+]",
+                        portal_filter=portal_filter,
+                        interleave=False,
+                        slow_domains=SLOW_PORTAL_DOMAINS,
+                        claim=_claim,
+                    )
+                finally:
+                    if session is not None:
+                        await session.close()
 
             asyncio.run(_async_backfill_runner())
 
@@ -1312,16 +1152,14 @@ def run_sitemap_backfill(
                     if res.get("status") == "success":
                         content = res.get("content", "").strip()
                         if len(content) >= min_content_length:
-                            record = {
-                                "url": u,
-                                "title": cand.get("title") or res.get("title") or "",
-                                "published_date": cand.get("published_date") or res.get("published_date") or "",
-                                "archive_date": cand.get("archive_date", ""),
-                                "content": content,
-                                "source": urlparse(u).netloc,
-                                "backend": res.get("backend", "direct_http"),
-                                "harvested_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            }
+                            record = build_news_record(
+                                url=u,
+                                title=cand.get("title") or res.get("title"),
+                                published_date=cand.get("published_date") or res.get("published_date"),
+                                archive_date=cand.get("archive_date", ""),
+                                content=content,
+                                backend=res.get("backend", "direct_http"),
+                            )
                             line = json.dumps(record, ensure_ascii=False) + "\n"
                             with file_lock:
                                 with open(out_path, "a", encoding="utf-8") as f:
@@ -1334,7 +1172,7 @@ def run_sitemap_backfill(
                             return True
                         else:
                             with db_lock:
-                                frontier.mark_failed(u, error="Content length below minimum threshold")
+                                frontier.mark_failed(u, error=REASON_TOO_SHORT)
                     else:
                         with db_lock:
                             frontier.mark_failed(u, error=res.get("error", "Extraction failed"))

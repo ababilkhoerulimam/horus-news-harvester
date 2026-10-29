@@ -6,9 +6,9 @@ using empirical fingerprints from 66 Indonesian news portals.
 
 from __future__ import annotations
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set
 
 from processors.topic_config import TopicConfig, PortalEntry
 
@@ -68,8 +68,6 @@ class PortalCatalogRegistry:
             except Exception:
                 pass
 
-    def get_known_domains(self) -> Set[str]:
-        return set(self._fingerprints.keys()) | set(self._catalog.keys())
 
     def resolve_domain(self, domain: str, overrides: Optional[Dict[str, Any]] = None) -> ResolvedPortal:
         """
@@ -124,6 +122,45 @@ class PortalCatalogRegistry:
 
 # Global catalog instance
 default_catalog = PortalCatalogRegistry()
+
+# Cache of domain -> WP-REST base. Populated lazily so importing this module stays cheap.
+_wp_api_cache: Dict[str, Optional[str]] = {}
+
+
+def _lookup_wp_portal(domain: str, catalog: PortalCatalogRegistry) -> Optional[ResolvedPortal]:
+    """Walks up the domain labels until a portal known to expose WP-REST is found.
+
+    Article URLs frequently sit on a subdomain (www.balipost.com) while the
+    fingerprint is stored for the registrable domain (balipost.com).
+    """
+    labels = domain.split(".")
+    for index in range(len(labels) - 1):
+        portal = catalog.resolve_domain(".".join(labels[index:]))
+        if portal.adapter == "wordpress_rest":
+            return portal
+    return None
+
+
+def wp_api_base_for(
+    domain: str,
+    catalog: Optional[PortalCatalogRegistry] = None,
+) -> Optional[str]:
+    """Returns the WP-REST base URL for a domain, or None when it has no WP-REST.
+
+    Single source of truth for "can this portal give us the article as JSON". The
+    adapter check matters: resolve_domain always fills wp_api_base with a guessed
+    default, but only a fingerprinted has_wp_json portal actually serves it.
+    """
+    key = (domain or "").strip().lower()
+    if not key:
+        return None
+    if catalog is not None:
+        portal = _lookup_wp_portal(key, catalog)
+        return portal.wp_api_base if portal else None
+    if key not in _wp_api_cache:
+        portal = _lookup_wp_portal(key, default_catalog)
+        _wp_api_cache[key] = portal.wp_api_base if portal else None
+    return _wp_api_cache[key]
 
 
 # Predefined Topic Presets

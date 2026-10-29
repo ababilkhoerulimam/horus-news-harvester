@@ -6,7 +6,6 @@ Identifies ad networks, tracking telemetry, and sponsored redirect links (Tabool
 
 from urllib.parse import urlparse
 import re
-from typing import Set
 
 # Core ad, tracking, and sponsored-content networks dominant in Indonesian media portals
 AD_TRACKER_DOMAINS: frozenset = frozenset({

@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Generator, List, Optional, Set, Union
 
 logger = logging.getLogger("processors.dapt")
 
@@ -156,9 +156,7 @@ def build_dapt_corpus(
 def format_corpus_summary(stats: Dict[str, Any]) -> str:
     """Renders human-readable summary table of DAPT corpus generation."""
     lines = [
-        "============================================================",
         "      NusaBERT DAPT Sports Corpus Preparation Report        ",
-        "============================================================",
         f" Target File        : {stats.get('output_path')}",
         f" Articles Processed : {stats.get('total_read', 0):,}",
         f" Articles Accepted  : {stats.get('articles_retained', stats.get('total_written', 0)):,}",
@@ -166,6 +164,5 @@ def format_corpus_summary(stats: Dict[str, Any]) -> str:
         f" Discarded (Duplicate): {stats.get('discarded_duplicate', stats.get('skipped_duplicate', 0)):,}",
         f" Total Words        : {stats.get('total_words', 0):,} words",
         f" Estimated Tokens   : ~{stats.get('estimated_tokens', 0):,} tokens",
-        "============================================================",
     ]
     return "\n".join(lines)

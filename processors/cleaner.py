@@ -1,11 +1,10 @@
 import email.utils
 import json
-import os
 import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Set
+from typing import Optional
 
 
 AD_PATTERNS = [
@@ -56,34 +55,6 @@ def clean_news_text(raw_text: str) -> str:
     return text.strip()
 
 
-def deduplicate_articles(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Deduplicates articles based on normalized title or exact URL.
-    """
-    seen_urls = set()
-    seen_titles = set()
-    deduped = []
-
-    for art in articles:
-        url = (art.get("url") or "").strip().lower()
-        title = (art.get("title") or "").strip().lower()
-
-        # Simplify title for fuzzy matching
-        norm_title = re.sub(r"[^\w\s]", "", title)
-
-        if url and url in seen_urls:
-            continue
-        if norm_title and norm_title in seen_titles:
-            continue
-
-        if url:
-            seen_urls.add(url)
-        if norm_title:
-            seen_titles.add(norm_title)
-
-        deduped.append(art)
-
-    return deduped
 
 
 def normalize_timestamp(raw_date: Optional[str], base_time: Optional[datetime] = None) -> str:
@@ -197,11 +168,18 @@ def normalize_timestamp(raw_date: Optional[str], base_time: Optional[datetime] =
     return s
 
 
-def deduplicate_jsonl_file(file_path: Path, id_key: str = "url") -> int:
+def deduplicate_jsonl_file(file_path: Path, id_key: str = "url", prefer: str = "first") -> int:
     """
     Cleans an existing JSONL file by removing duplicate records in-place.
     Returns the count of duplicate rows removed.
+
+    prefer="first" keeps the record that appears first, which is the historical
+    behaviour. prefer="longest" keeps the one with the longest content, which is
+    what a re-harvest needs: the later record is only worth having if it is better.
     """
+    if prefer not in ("first", "longest"):
+        raise ValueError(f"prefer must be 'first' or 'longest', got {prefer!r}")
+
     fpath = Path(file_path)
     if not fpath.exists() or not fpath.is_file():
         return 0
@@ -209,6 +187,10 @@ def deduplicate_jsonl_file(file_path: Path, id_key: str = "url") -> int:
     seen_ids = set()
     unique_lines = []
     duplicates_removed = 0
+    # Slot and content length per id, so a longer later record replaces in place
+    # without reordering the file and without re-parsing what is already stored.
+    line_index = {}
+    best_length = {}
 
     with open(fpath, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -234,9 +216,16 @@ def deduplicate_jsonl_file(file_path: Path, id_key: str = "url") -> int:
             id_str = str(raw_id)
             if id_str in seen_ids:
                 duplicates_removed += 1
+                if prefer == "longest":
+                    length = len(item.get("content") or "")
+                    if length > best_length[id_str]:
+                        unique_lines[line_index[id_str]] = stripped
+                        best_length[id_str] = length
                 continue
 
             seen_ids.add(id_str)
+            line_index[id_str] = len(unique_lines)
+            best_length[id_str] = len(item.get("content") or "")
             unique_lines.append(stripped)
 
     if duplicates_removed > 0:
@@ -249,25 +238,5 @@ def deduplicate_jsonl_file(file_path: Path, id_key: str = "url") -> int:
     return duplicates_removed
 
 
-def load_existing_ids(file_path: Path, id_key: str = "url") -> Set[str]:
-    """Reads existing item IDs from a JSONL file to prevent duplicate disk appends."""
-    fpath = Path(file_path)
-    if not fpath.exists() or not fpath.is_file():
-        return set()
-    existing: Set[str] = set()
-    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                obj = json.loads(stripped)
-                val = obj.get(id_key) or obj.get("url") or obj.get("tweet_id") or obj.get("video_id")
-                if val:
-                    existing.add(str(val))
-            except Exception:
-                continue
-    return existing
 
 
-_load_existing_ids = load_existing_ids

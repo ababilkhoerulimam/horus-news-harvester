@@ -11,7 +11,26 @@ import json
 import sys
 
 from doctor import run_doctor, format_doctor_report
-from channels import get_channel, get_all_channels
+from channels import get_channel
+
+
+LEGACY_COMMANDS = {
+    "harvest": "topic harvest --topic sports",
+    "export": "topic export --topic <topic_id>",
+    "dapt-corpus": "topic dapt --topic <topic_id>",
+    "backfill": None,
+}
+
+
+def warn_legacy(command: str) -> None:
+    """Announces that a pre-NNIH subcommand is on the removal path."""
+    if command not in LEGACY_COMMANDS:
+        return
+    replacement = LEGACY_COMMANDS[command]
+    if replacement:
+        print(f"[!] '{command}' is deprecated and will be removed. Use '{replacement}' instead.")
+    else:
+        print(f"[!] '{command}' is deprecated and will be removed; the topic engine does not cover it yet.")
 
 
 def main():
@@ -36,6 +55,22 @@ def main():
 
     # sync-firefox-twitter command
     subparsers.add_parser("sync-firefox-twitter", help="Auto-extract Twitter session from local Firefox profile")
+
+    domain_session_parser = subparsers.add_parser(
+        "sync-firefox-session",
+        help="Capture browser cookies for any domain into config/sessions",
+    )
+    domain_session_parser.add_argument(
+        "--domain", "-d", nargs="+", required=True, help="Domain(s) to capture, e.g. youtube.com"
+    )
+    domain_session_parser.add_argument(
+        "--names", "-n", nargs="+", default=None, help="Restrict to these cookie names"
+    )
+    domain_session_parser.add_argument(
+        "--user-agent",
+        default=None,
+        help="User-Agent to store with the cookies (default: Chrome 124, matching curl_cffi)",
+    )
 
     # set-twitter-session command
     session_parser = subparsers.add_parser("set-twitter-session", help="Manually save Twitter auth_token and ct0 tokens")
@@ -137,7 +172,16 @@ def main():
     t_dapt.add_argument("--min-words", "-w", type=int, default=50, help="Minimum word count")
     t_dapt.add_argument("--output", "-o", default=None, help="Target .txt corpus file")
 
+    # topic social
+    t_social = topic_subparsers.add_parser("social", help="Harvest YouTube and Twitter discussion for a topic")
+    t_social.add_argument("--topic", "-t", required=True, help="Topic ID")
+    t_social.add_argument("--platform", "-p", default="both", choices=["youtube", "twitter", "both"])
+    t_social.add_argument("--limit", "-l", type=int, default=None, help="Cap on items per target")
+    t_social.add_argument("--resume", "-r", action="store_true", help="Resume pending social frontier items")
+    t_social.add_argument("--max-runtime", type=int, default=None, help="Wall-clock budget in seconds for this run")
+
     args = parser.parse_args()
+    warn_legacy(args.command)
 
     if args.command == "doctor":
         res = run_doctor()
@@ -186,6 +230,20 @@ def main():
             print("[!] No active Twitter session found in Firefox cookies.")
             print("    Make sure you have logged into x.com in Firefox.")
 
+    elif args.command == "sync-firefox-session":
+        from backends.firefox_cookies import extract_cookies
+        from processors import session_store
+
+        for domain in args.domain:
+            found = extract_cookies([domain], names=args.names)
+            flat = {}
+            for host_cookies in found.values():
+                flat.update(host_cookies)
+            if flat and session_store.save(domain, flat, user_agent=args.user_agent):
+                print(f"[+] {len(flat)} cookies saved for {domain} -> {session_store.session_path(domain)}")
+            else:
+                print(f"[!] No matching cookies for {domain} in Firefox profiles.")
+
     elif args.command == "set-twitter-session":
         from backends.firefox_cookies import save_twitter_session
         tokens = {
@@ -197,19 +255,10 @@ def main():
         print("[+] Manually saved Twitter session to config/twitter_session.json.")
 
     elif args.command == "harvest":
-        from processors.http_client import default_http_client
-        if getattr(args, "proxy", None):
-            default_http_client.set_single_proxy(args.proxy)
-            print(f"[*] Configured proxy: {args.proxy}")
-        if getattr(args, "proxies_file", None):
-            loaded_cnt = default_http_client.load_proxies_from_file(args.proxies_file)
-            print(f"[*] Loaded {loaded_cnt} rotating proxies from '{args.proxies_file}'")
-        else:
-            from processors.http_client import DEFAULT_PROXIES_FILE
-            if DEFAULT_PROXIES_FILE.exists():
-                loaded_cnt = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
-                if loaded_cnt:
-                    print(f"[*] Auto-loaded {loaded_cnt} rotating proxies from '{DEFAULT_PROXIES_FILE}'")
+        from processors.cli_support import configure_proxy
+        loaded_cnt, proxy_source = configure_proxy(getattr(args, "proxy", None), getattr(args, "proxies_file", None))
+        if loaded_cnt:
+            print(f"[*] Loaded {loaded_cnt} rotating proxies from '{proxy_source}'")
 
         from scripts.topic_harvester import harvest_topic
         print("[*] Notice: Legacy 'harvest' redirected to NNIH 2-Core Async Engine for topic 'sports'.")
@@ -253,19 +302,10 @@ def main():
             sys.exit(1)
 
     elif args.command == "backfill":
-        from processors.http_client import default_http_client
-        if getattr(args, "proxy", None):
-            default_http_client.set_single_proxy(args.proxy)
-            print(f"[*] Configured proxy: {args.proxy}")
-        if getattr(args, "proxies_file", None):
-            loaded_cnt = default_http_client.load_proxies_from_file(args.proxies_file)
-            print(f"[*] Loaded {loaded_cnt} rotating proxies from '{args.proxies_file}'")
-        else:
-            from processors.http_client import DEFAULT_PROXIES_FILE
-            if DEFAULT_PROXIES_FILE.exists():
-                loaded_cnt = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
-                if loaded_cnt:
-                    print(f"[*] Auto-loaded {loaded_cnt} rotating proxies from '{DEFAULT_PROXIES_FILE}'")
+        from processors.cli_support import configure_proxy
+        loaded_cnt, proxy_source = configure_proxy(getattr(args, "proxy", None), getattr(args, "proxies_file", None))
+        if loaded_cnt:
+            print(f"[*] Loaded {loaded_cnt} rotating proxies from '{proxy_source}'")
 
         if args.stats:
             from processors.crawl_frontier import CrawlFrontier
@@ -354,7 +394,6 @@ def main():
                 if len(rep["portals"]) > 8:
                     print(f"  ... and {len(rep['portals']) - 8} more portals")
                 print(f"Default Output:  {rep['output_path']}")
-                print("==================================================")
             except Exception as e:
                 print(f"[!] Validation failed: {e}")
                 sys.exit(1)
@@ -366,7 +405,6 @@ def main():
                 print(f"  * [{t['id']}] {t['name']}")
                 if t['description']:
                     print(f"      {t['description']}")
-            print("==================================================")
 
         elif args.topic_action == "harvest":
             harvest_topic(
@@ -387,6 +425,17 @@ def main():
 
         elif args.topic_action == "dapt":
             res = generate_topic_dapt_corpus(args.topic, min_words=args.min_words, out_path=args.output)
+            print(json.dumps(res, indent=2))
+
+        elif args.topic_action == "social":
+            from scripts.social_harvester import run_social_harvest
+            res = run_social_harvest(
+                args.topic,
+                platform=args.platform,
+                resume=args.resume,
+                limit=args.limit,
+                max_runtime=args.max_runtime,
+            )
             print(json.dumps(res, indent=2))
 
         else:

@@ -5,23 +5,13 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from processors.topic_config import (
-    TopicConfig,
-    TopicMeta,
-    PortalsConfig,
-    OutputConfig,
-    load_topic_config,
-)
+from processors.topic_config import PortalEntry, TopicConfig, load_topic_config
 from processors.portal_catalog import (
     PortalCatalogRegistry,
     resolve_topic_portals,
     CATALOG_PRESETS,
 )
-from scripts.topic_harvester import (
-    generate_topic_template,
-    validate_topic,
-    list_available_topics,
-)
+from scripts.topic_harvester import generate_topic_template, validate_topic
 
 
 class TestTopicConfig(unittest.TestCase):
@@ -30,6 +20,11 @@ class TestTopicConfig(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_portal_entry_normalizes_domain(self):
+        """Verifies the domain validator strips scheme, path, port, and casing."""
+        entry = PortalEntry(domain=" HTTPS://WWW.Kompas.com:443/bola ")
+        self.assertEqual(entry.domain, "www.kompas.com")
 
     def test_topic_config_minimal_valid(self):
         raw = {

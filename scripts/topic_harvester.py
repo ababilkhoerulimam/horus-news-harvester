@@ -10,35 +10,29 @@ import argparse
 import asyncio
 import json
 import logging
-import multiprocessing
 from multiprocessing import Process
-import os
 import sys
-import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Set, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Any, List, Optional
 
 # Ensure repository root is on sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import yaml
 
 from backends.curl_impersonate import CurlImpersonateBackend
-from channels.portal_news import (
-    PortalNewsChannel,
-    normalize_portal_url,
-    extract_clean_article_text,
-    is_cloudflare_challenge,
-)
+from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.cleaner import clean_news_text
-from processors.crawl_frontier import CrawlFrontier, interleave_by_portal
-from processors.http_client import default_http_client, DEFAULT_PROXIES_FILE
+from processors.crawl_frontier import CrawlFrontier
+from processors.cli_support import configure_proxy
+from processors.fetch_pipeline import fetch_article
+from processors.record_writer import MIN_QUALITY_CHARS, build_topic_record
 from processors.topic_config import TopicConfig, load_topic_config
-from processors.portal_catalog import resolve_topic_portals, ResolvedPortal, CATALOG_PRESETS
+from processors.portal_catalog import resolve_topic_portals, wp_api_base_for
+from processors.worker_loop import run_async_worker
 from scripts.sitemap_backfill import fetch_sitemap_urls, fetch_wordpress_rest_articles
 
 logging.basicConfig(
@@ -57,7 +51,6 @@ def generate_topic_template(topic_id: str, output_path: Optional[str] = None) ->
     template_content = f"""# ==============================================================================
 # Topic Configuration: {clean_id.upper()}
 # National News Intelligence Harvester (NNIH)
-# ==============================================================================
 
 topic:
   id: "{clean_id}"
@@ -66,9 +59,7 @@ topic:
   default_output: "data/raw/news/{clean_id}.jsonl"
   default_dapt_output: "data/processed/nusabert_{clean_id}_dapt.txt"
 
-# ------------------------------------------------------------------------------
 # Keywords Taxonomy (Flat list or nested category dictionary)
-# ------------------------------------------------------------------------------
 keywords:
   # Core events and phenomena
   events:
@@ -86,14 +77,12 @@ keywords:
     - "indonesia"
     - "jakarta"
 
-# ------------------------------------------------------------------------------
 # Target Portals Configuration
 # Built-in presets available:
 #   * national_wire: 15 Tier-1 mainstream national media (Detik, Kompas, Antara, CNN, Tempo, etc.)
 #   * regional_epicenters: Regional newspapers (Kalteng Pos, Riau Pos, Sumeks, BeritaJatim, etc.)
 #   * investigative_environment: Investigative desks (Mongabay, Betahita, Forest Digest, Multatuli)
 #   * all_66_catalog: All 66 fingerprinted national and regional news portals
-# ------------------------------------------------------------------------------
 portals:
   presets:
     - "national_wire"
@@ -105,9 +94,7 @@ portals:
   # Optional: Domains to blacklist from crawling
   exclude: []
 
-# ------------------------------------------------------------------------------
 # Output & Analytics Configuration
-# ------------------------------------------------------------------------------
 output:
   format: "jsonl"              # Options: jsonl, parquet, sqlite, duckdb
   min_word_count: 50           # Filter threshold for DAPT language modeling
@@ -216,6 +203,9 @@ def discover_topic_articles(
     return total_discovered
 
 
+TOPIC_MIN_CONTENT_LENGTH = 120
+
+
 async def _async_crawl_worker_loop(
     worker_id: int,
     topic_id: str,
@@ -223,131 +213,52 @@ async def _async_crawl_worker_loop(
     db_path: str,
     concurrency: int = 25,
     limit_per_worker: int = 50000,
+    min_quality_chars: int = MIN_QUALITY_CHARS,
 ):
     """Event loop for one CPU core process, streaming requests via AsyncQueue (direct-first)."""
     curl_backend = CurlImpersonateBackend()
     channel = PortalNewsChannel()
     frontier = CrawlFrontier(db_path=db_path, batch_size=50)
     session = curl_backend.create_async_session()
-    extracted_total = 0
 
-    part_path = Path(output_part_file)
-    part_path.parent.mkdir(parents=True, exist_ok=True)
-
-    file_lock = asyncio.Lock()
-    db_lock = asyncio.Lock()
-
-    async def _process_single(item: Dict[str, Any], out_handle) -> None:
-        nonlocal extracted_total
-        raw_url = item["url"]
-        norm_url = normalize_portal_url(raw_url)
+    async def _process_item(item: Dict[str, Any], sink) -> None:
+        norm_url = normalize_portal_url(item["url"])
         portal = item.get("portal", "unknown")
-
-        try:
-            # 1. Primary: Direct fetch (fast, ~0.15s)
-            if session is not None:
-                status, html = await curl_backend.fetch_async(session, norm_url, proxy=None)
-
-                # Fast-fail on HTTP 404: page deleted or non-existent on origin
-                if status == 404:
-                    async with db_lock:
-                        frontier.mark_failed(norm_url, error="HTTP 404 Not Found")
-                    return
-
-                # Fallback to rotating proxy if WAF/blocked/challenge
-                if status in (0, 202, 403, 429, 503) or not html or is_cloudflare_challenge(status, html):
-                    proxy = default_http_client.get_active_proxy()
-                    if proxy:
-                        status, html = await curl_backend.fetch_async(session, norm_url, proxy=proxy)
-
-                if status == 200 and html and not is_cloudflare_challenge(status, html):
-                    clean_content = extract_clean_article_text(html)
-                    if clean_content and len(clean_content) >= 120:
-                        doc = {
-                            "url": norm_url,
-                            "title": item.get("title", ""),
-                            "content": clean_content,
-                            "topic": topic_id,
-                            "portal": portal,
-                            "publish_date": item.get("published_date", ""),
-                            "harvested_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        async with file_lock:
-                            out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
-                            extracted_total += 1
-                            curr = extracted_total
-
-                        async with db_lock:
-                            frontier.mark_completed(norm_url)
-
-                        if curr % 50 == 0:
-                            async with file_lock:
-                                out_handle.flush()
-                            async with db_lock:
-                                frontier.flush()
-                            logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
-                        return
-
-            # 2. Secondary fallback: thread-offloaded channel extraction
-            res = await asyncio.to_thread(channel.extract, norm_url, {"disable_headless": True})
-            if res.get("status") == "success" and res.get("content"):
-                doc = {
-                    "url": norm_url,
-                    "title": res.get("title", item.get("title", "")),
-                    "content": res.get("content", ""),
-                    "topic": topic_id,
-                    "portal": portal,
-                    "publish_date": item.get("published_date", ""),
-                    "harvested_at": datetime.now(timezone.utc).isoformat(),
-                }
-                async with file_lock:
-                    out_handle.write(json.dumps(doc, ensure_ascii=False) + "\n")
-                    extracted_total += 1
-                    curr = extracted_total
-
-                async with db_lock:
-                    frontier.mark_completed(norm_url)
-
-                if curr % 50 == 0:
-                    async with file_lock:
-                        out_handle.flush()
-                    async with db_lock:
-                        frontier.flush()
-                    logger.info(f"[Core-{worker_id}] Harvested {curr} articles -> {part_path.name}")
-            else:
-                async with db_lock:
-                    frontier.mark_failed(norm_url, error="Content length below threshold")
-        except Exception as e:
-            async with db_lock:
-                frontier.mark_failed(norm_url, error=str(e))
+        result = await fetch_article(
+            session,
+            curl_backend,
+            channel,
+            norm_url,
+            min_content_length=TOPIC_MIN_CONTENT_LENGTH,
+            fallback_min_content_length=1,
+            wp_api_base=wp_api_base_for(urlparse(norm_url).netloc.replace("www.", "")),
+            min_quality_chars=min_quality_chars,
+        )
+        if result.content is None:
+            await sink.fail(norm_url, result.reason)
+            return
+        await sink.emit(build_topic_record(
+            url=norm_url,
+            title=result.title or item.get("title", ""),
+            content=result.content,
+            topic_id=topic_id,
+            portal=portal,
+            publish_date=item.get("published_date", ""),
+            quality=result.quality,
+            content_chars=result.content_chars,
+        ))
 
     try:
-        with open(part_path, "a", encoding="utf-8") as out_f:
-            while extracted_total < limit_per_worker:
-                batch = frontier.claim_pending_batch(limit=concurrency * 4)
-                if not batch:
-                    break
-
-                batch = interleave_by_portal(batch)
-
-                queue: asyncio.Queue = asyncio.Queue()
-                for item in batch:
-                    queue.put_nowait(item)
-
-                async def _worker():
-                    while not queue.empty():
-                        try:
-                            item = queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-                        await _process_single(item, out_f)
-                        queue.task_done()
-
-                worker_tasks = [asyncio.create_task(_worker()) for _ in range(concurrency)]
-                await asyncio.gather(*worker_tasks)
-                out_f.flush()
-                frontier.flush()
-                logger.info(f"[Core-{worker_id}] Batch completed | Extracted: {extracted_total} articles")
+        await run_async_worker(
+            worker_id=worker_id,
+            frontier=frontier,
+            output_part_file=output_part_file,
+            process_item=_process_item,
+            concurrency=concurrency,
+            limit_per_worker=limit_per_worker,
+            label=f"[Core-{worker_id}]",
+            interleave=True,
+        )
     finally:
         frontier.flush()
         frontier.close()
@@ -357,7 +268,6 @@ async def _async_crawl_worker_loop(
             except Exception:
                 pass
 
-
 def _worker_process_entrypoint(
     worker_id: int,
     topic_id: str,
@@ -365,6 +275,7 @@ def _worker_process_entrypoint(
     db_path: str,
     concurrency: int = 25,
     limit_per_worker: int = 50000,
+    min_quality_chars: int = MIN_QUALITY_CHARS,
 ):
     """Top-level process entrypoint for multiprocessing spawn."""
     asyncio.run(
@@ -375,6 +286,7 @@ def _worker_process_entrypoint(
             db_path=db_path,
             concurrency=concurrency,
             limit_per_worker=limit_per_worker,
+            min_quality_chars=min_quality_chars,
         )
     )
 
@@ -398,13 +310,13 @@ def harvest_topic(
     topic_id = cfg.topic.id
     output_file = output_override or str(cfg.get_output_path())
     db_path = f"data/state/crawl_{topic_id}_frontier.db"
+    min_quality_chars = cfg.output.min_quality_chars if cfg.output else MIN_QUALITY_CHARS
 
     frontier = CrawlFrontier(db_path=db_path)
 
-    if DEFAULT_PROXIES_FILE.exists():
-        loaded = default_http_client.load_proxies_from_file(str(DEFAULT_PROXIES_FILE))
-        if loaded:
-            logger.info(f"[*] Auto-loaded {loaded} proxies from '{DEFAULT_PROXIES_FILE}'")
+    loaded, proxy_source = configure_proxy()
+    if loaded:
+        logger.info(f"[*] Auto-loaded {loaded} proxies from '{proxy_source}'")
 
     if stats_only:
         summary = frontier.get_frontier_summary()
@@ -418,7 +330,6 @@ def harvest_topic(
         print("\nBreakdown by Portal:")
         for portal, pstats in summary["portals"].items():
             print(f"  * {portal}: {pstats['total']} total ({pstats['completed']} done, {pstats['pending']} pending, {pstats['failed']} failed)")
-        print("================================================")
         frontier.close()
         return
 
@@ -446,6 +357,7 @@ def harvest_topic(
                 db_path=db_path,
                 concurrency=concurrency,
                 limit_per_worker=limit,
+                min_quality_chars=min_quality_chars,
             )
         )
     else:
@@ -457,7 +369,7 @@ def harvest_topic(
             part_files.append(p_file)
             p = Process(
                 target=_worker_process_entrypoint,
-                args=(i, topic_id, str(p_file), db_path, concurrency, limit_per_core),
+                args=(i, topic_id, str(p_file), db_path, concurrency, limit_per_core, min_quality_chars),
             )
             processes.append(p)
             p.start()
@@ -678,7 +590,6 @@ if __name__ == "__main__":
         if len(rep["portals"]) > 8:
             print(f"  ... and {len(rep['portals']) - 8} more portals")
         print(f"Default Output:  {rep['output_path']}")
-        print("==================================================")
 
     elif args.action == "list":
         t_list = list_available_topics()
@@ -687,7 +598,6 @@ if __name__ == "__main__":
             print(f"  * [{t['id']}] {t['name']}")
             if t['description']:
                 print(f"      {t['description']}")
-        print("==================================================")
 
     elif args.action == "harvest":
         harvest_topic(

@@ -3,9 +3,8 @@ Doctor Diagnostic Module for Indonesian Sports Scrapper.
 Mirrors Agent-Reach doctor pattern for zero-side-effect environment health checking.
 """
 
-import sys
 import importlib
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from channels import get_all_channels
 

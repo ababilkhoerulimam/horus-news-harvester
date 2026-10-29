@@ -58,6 +58,34 @@ portals:
   include: []
   exclude: []
 
+social:
+  enabled: true
+  youtube:
+    queries:
+      - "timnas indonesia"
+      - "liga 1 indonesia"
+      - "ibl basket indonesia"
+      - "pbsi bulu tangkis"
+      - "proliga voli"
+    channels: []
+    max_videos_per_run: 25
+    max_comments_per_video: null
+    max_replies_per_comment: null
+    max_runtime_seconds: null
+    max_seconds_per_video: null
+    reply_workers: 4
+    request_min_interval_ms: 250
+    progress_every: 500
+  twitter:
+    queries:
+      - "timnas indonesia"
+      - "liga 1"
+      - "pbsi"
+    handles:
+      - "PSSI"
+      - "PBSI"
+    max_tweets_per_query: 50
+
 output:
   format: "jsonl"
   min_word_count: 50

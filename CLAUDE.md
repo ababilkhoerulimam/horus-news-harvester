@@ -1,7 +1,7 @@
-# National News Intelligence Harvester (NNIH) - Developer & Agent Guide
+# Horus News Harvester - Developer & Agent Guide
 
 ## Core Architecture
-NNIH is a topic-agnostic, declarative news intelligence crawler for 66 fingerprinted Indonesian national and regional media portals.
+Horus News Harvester (formerly NNIH) is a topic-agnostic, declarative news intelligence crawler for 66 fingerprinted Indonesian national and regional media portals.
 
 ### Golden Rules for Agents:
 1. **Never use or resurrect legacy scripts**:
@@ -9,7 +9,7 @@ NNIH is a topic-agnostic, declarative news intelligence crawler for 66 fingerpri
    - `scripts/scheduler.py` (DELETED)
    - `scripts/prepare_dapt_corpus.py` (DELETED)
    - `scripts/analyze_dewa_sites.py` (DELETED)
-2. **Always use declarative topic engine (`nnih` or `python cli.py topic ...`)**:
+2. **Always use declarative topic engine (`horus` / `nnih` or `python cli.py topic ...`)**:
    - Configuration files live in `config/topics/<topic_id>.yaml` (e.g. `karhutla.yaml`, `ikn.yaml`, `sports.yaml`).
    - Every topic is strictly validated via Pydantic v2 (`processors/topic_config.py`).
 3. **Execution Engine**:
@@ -32,9 +32,18 @@ python cli.py topic harvest --topic <topic_id> [--days N] [--limit N] [--resume]
 python cli.py topic export --topic <topic_id> --format parquet
 python cli.py topic export --topic <topic_id> --format duckdb
 
-# 4. NusaBERT DAPT MLM corpus generation
+# 4. Social harvesting (YouTube videos + comment threads, Twitter/X tweets)
+python cli.py topic social --topic <topic_id> [--platform youtube|twitter|both] [--limit N] [--resume]
+
+# 5. NusaBERT DAPT MLM corpus generation
 python cli.py topic dapt --topic <topic_id> --min-words 50
 ```
+
+`topic social` reads the `social:` block in the topic YAML. YouTube harvests every discovered
+video plus its full reply threads; Twitter harvests keyword queries and handle timelines through
+the GraphQL backend. Both write JSONL to `data/raw/{youtube,twitter}/<topic_id>.jsonl` and
+deduplicate through `data/state/social_<topic>_<platform>_frontier.db`. The command prints a
+per-target coverage report (discovered, new, failed) so silent zero-yield runs are visible.
 
 ## Directory Responsibilities
 - `config/topics/`: Declarative YAML topic definitions.
@@ -45,6 +54,8 @@ python cli.py topic dapt --topic <topic_id> --min-words 50
   - `crawl_frontier.py`: Resumable SQLite WAL queue with in-memory batch commit buffer.
   - `cleaner.py`: Ad filtering and text sanitization.
   - `dapt.py`: NLP corpus formatting.
+  - `metrics.py`: `parse_count` for Indonesian/English abbreviated counts ("1,2 rb", "1.2K").
+  - `youtube_normalizer.py` / `tweet_normalizer.py`: single mapping per platform to the harvest record.
 - `backends/curl_impersonate.py`: Chrome 124 TLS JA4 impersonation with HTTP/2 keep-alive and `AsyncSession`.
 - `channels/portal_news.py`: Multi-page normalization and Inertia.js fast unpacking.
 - `scripts/topic_harvester.py`: Central 2-core harvesting orchestrator.

@@ -7,7 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from channels.portal_news import extract_clean_article_text
 from doctor import check_packages
@@ -110,6 +110,29 @@ class TestSitemapParser(unittest.TestCase):
         self.assertEqual(len(articles), 0)
         self.assertEqual(len(child_sitemaps), 2)
         self.assertIn("https://www.antaranews.com/sitemap_news.xml", child_sitemaps)
+
+    def test_parse_news_sitemap_preserves_title_and_date(self):
+        """Verifies Google News extension metadata survives namespaced parsing."""
+        news_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+                xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+            <url>
+                <loc>https://www.antaranews.com/berita/123456/sepak-bola-timnas</loc>
+                <news:news>
+                    <news:publication>
+                        <news:name>Antara</news:name>
+                        <news:language>id</news:language>
+                    </news:publication>
+                    <news:publication_date>2026-10-20T10:00:00Z</news:publication_date>
+                    <news:title>Timnas Indonesia Menang</news:title>
+                </news:news>
+            </url>
+        </urlset>
+        """
+        articles, _ = parse_sitemap_xml(news_xml)
+        self.assertEqual(len(articles), 1)
+        self.assertEqual(articles[0]["title"], "Timnas Indonesia Menang")
+        self.assertEqual(articles[0]["published_date"], "2026-10-20T10:00:00Z")
 
     def test_generate_portal_archive_urls(self):
         """Verifies date archive URL generator for Detik and Antara."""

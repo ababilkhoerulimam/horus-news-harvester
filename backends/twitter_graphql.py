@@ -5,13 +5,15 @@ Bypasses public timeline limits and syndication restrictions.
 """
 
 import json
+import logging
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from processors.cleaner import clean_news_text
+from processors.tweet_normalizer import normalize_tweet
 
 # Public Twitter Web client bearer token embedded in main.js
 TWITTER_WEB_BEARER = (
@@ -19,7 +21,11 @@ TWITTER_WEB_BEARER = (
     "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 )
 
+logger = logging.getLogger("twitter_graphql")
+
 GRAPHQL_BASE = "https://x.com/i/api/graphql"
+MAX_TIMELINE_PAGES = 5
+MAX_RATE_LIMIT_WAIT = 900.0
 
 DEFAULT_QUERY_IDS = {
     "UserByScreenName": "AMIBMjtxEEATh4z8V9GtRg",
@@ -55,23 +61,12 @@ class TwitterGraphQLBackend:
         return headers
 
     def validate_session(self, timeout: float = 8.0) -> bool:
+        """Resolves a known handle to confirm the cookies still authenticate.
+
+        The legacy settings.json endpoint now returns 404 for every session, so
+        the probe uses a GraphQL query instead of a retired REST route.
         """
-        Pre-flight check against Twitter account settings endpoint.
-        Returns True if session cookie is active, False on 401/403 or network failure.
-        """
-        # ponytail: Validates auth_token + ct0 against settings endpoint; returns False on expiry to trigger Firefox resync.
-        url = "https://x.com/i/api/1.1/account/settings.json"
-        req = urllib.request.Request(url, headers=self._get_headers())
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8", errors="replace"))
-                    return bool(data.get("screen_name"))
-                return False
-        except urllib.error.HTTPError:
-            return False
-        except Exception:
-            return False
+        return bool(self.get_user_id("X"))
 
     def discover_query_ids(self) -> None:
         """Dynamically scrapes live Twitter client JS bundles to extract active GraphQL query IDs."""
@@ -101,31 +96,64 @@ class TwitterGraphQLBackend:
                     for op, qid in re.findall(r'operationName:"([a-zA-Z0-9_\-]+)",queryId:"([a-zA-Z0-9_\-]+)"', js_text):
                         if op in self.query_ids:
                             self.query_ids[op] = qid
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Skipping bundle %s: %s", js_url, exc)
                     continue
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Query id discovery failed: %s", exc)
 
-    def _execute_get(self, operation: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _rate_limit_wait(error: urllib.error.HTTPError) -> float:
+        """Returns seconds to wait from the reset header, clamped to the cap."""
+        reset = error.headers.get("x-rate-limit-reset") if error.headers else None
+        try:
+            wait = float(reset) - time.time()
+        except (TypeError, ValueError):
+            return 60.0
+        return max(1.0, min(wait, MAX_RATE_LIMIT_WAIT))
+
+    def _execute(
+        self,
+        operation: str,
+        params: Dict[str, Any],
+        method: str = "GET",
+        retried: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Calls one GraphQL operation, retrying once on 404 (rotated id) and 429."""
         # ponytail: URL encode GraphQL variables; upgrade to twikit client if query IDs get rotated by X.
         query_id = self.query_ids.get(operation, "")
         url = f"{GRAPHQL_BASE}/{query_id}/{operation}"
-        query_str = urllib.parse.urlencode({k: json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v) for k, v in params.items()})
-        full_url = f"{url}?{query_str}"
-        req = urllib.request.Request(full_url, headers=self._get_headers())
+        headers = self._get_headers()
+
+        if method == "POST":
+            body = json.dumps({**params, "queryId": query_id}).encode("utf-8")
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        else:
+            query_str = urllib.parse.urlencode(
+                {k: json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v) for k, v in params.items()}
+            )
+            req = urllib.request.Request(f"{url}?{query_str}", headers=headers)
 
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
-                data = resp.read().decode("utf-8", errors="replace")
-                return json.loads(data)
+                return json.loads(resp.read().decode("utf-8", errors="replace"))
         except urllib.error.HTTPError as e:
             if e.code == 404 and not self._discovered:
                 self.discover_query_ids()
                 new_id = self.query_ids.get(operation, "")
                 if new_id and new_id != query_id:
-                    return self._execute_get(operation, params)
+                    return self._execute(operation, params, method=method)
+                return None
+            if e.code == 429 and not retried:
+                wait = self._rate_limit_wait(e)
+                if wait <= MAX_RATE_LIMIT_WAIT:
+                    logger.warning("Rate limited on %s; sleeping %.0fs", operation, wait)
+                    time.sleep(wait)
+                    return self._execute(operation, params, method=method, retried=True)
+            logger.warning("GraphQL %s failed with HTTP %s", operation, e.code)
             return None
-        except Exception:
+        except Exception as exc:
+            logger.warning("GraphQL %s failed: %s", operation, exc)
             return None
 
     def get_user_id(self, screen_name: str) -> Optional[str]:
@@ -137,7 +165,7 @@ class TwitterGraphQLBackend:
         variables = {"screen_name": clean_user, "withSafetyModeUserFields": True}
         features = {"hidden_profile_likes_enabled": True}
 
-        data = self._execute_get("UserByScreenName", {"variables": variables, "features": features})
+        data = self._execute("UserByScreenName", {"variables": variables, "features": features})
         if not data:
             return None
 
@@ -147,21 +175,43 @@ class TwitterGraphQLBackend:
             return str(rest_id)
         return None
 
+    def _collect(
+        self,
+        instructions: List[Dict[str, Any]],
+        limit: int,
+        seen: set,
+        fallback_username: str,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Maps one timeline page into records and returns the next cursor."""
+        records: List[Dict[str, Any]] = []
+        cursor = None
+
+        for inst in instructions:
+            for entry in inst.get("entries", []):
+                content = entry.get("content", {})
+                if content.get("cursorType") == "Bottom" and content.get("value"):
+                    cursor = content["value"]
+                    continue
+                tweet_result = content.get("itemContent", {}).get("tweet_results", {}).get("result", {})
+                if not tweet_result:
+                    continue
+                record = normalize_tweet(tweet_result, "graphql_api", fallback_username=fallback_username)
+                if record is None or record["tweet_id"] in seen:
+                    continue
+                seen.add(record["tweet_id"])
+                records.append(record)
+                if len(records) >= limit:
+                    return records, None
+
+        return records, cursor
+
     def get_user_tweets(self, screen_name: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Fetches tweets from user timeline using authenticated UserTweets GraphQL."""
+        """Fetches a user timeline, following the bottom cursor until limit is met."""
         clean_user = screen_name.lstrip("@").strip()
         rest_id = self.get_user_id(clean_user)
         if not rest_id:
             return []
 
-        variables = {
-            "userId": rest_id,
-            "count": limit,
-            "includePromotedContent": False,
-            "withQuickPromoteEligibilityTweetFields": False,
-            "withVoice": True,
-            "withV2Timeline": True
-        }
         features = {
             "responsive_web_graphql_exclude_directive_enabled": True,
             "verified_phone_label_enabled": False,
@@ -175,125 +225,88 @@ class TwitterGraphQLBackend:
             "rweb_video_timestamps_enabled": True,
             "longform_notetweets_rich_text_read_enabled": True,
             "longform_notetweets_inline_media_enabled": True,
-            "responsive_web_enhance_cards_enabled": False
+            "responsive_web_enhance_cards_enabled": False,
         }
 
-        data = self._execute_get("UserTweets", {"variables": variables, "features": features})
-        if not data:
-            return []
+        tweets: List[Dict[str, Any]] = []
+        seen: set = set()
+        cursor = None
+        pages = 0
 
-        tweets = []
-        try:
-            u_res = data.get("data", {}).get("user", {}).get("result", {})
-            tl = u_res.get("timeline") or u_res.get("timeline_v2") or {}
-            instructions = tl.get("timeline", {}).get("instructions", []) if "timeline" in tl else tl.get("instructions", [])
+        while len(tweets) < limit and pages < MAX_TIMELINE_PAGES:
+            pages += 1
+            variables = {
+                "userId": rest_id,
+                "count": limit - len(tweets),
+                "includePromotedContent": False,
+                "withQuickPromoteEligibilityTweetFields": False,
+                "withVoice": True,
+                "withV2Timeline": True,
+            }
+            if cursor:
+                variables["cursor"] = cursor
 
-            for inst in instructions:
-                entries = inst.get("entries", [])
-                for entry in entries:
-                    content = entry.get("content", {})
-                    item_content = content.get("itemContent", {})
-                    tweet_result = item_content.get("tweet_results", {}).get("result", {})
-                    if not tweet_result:
-                        continue
+            data = self._execute("UserTweets", {"variables": variables, "features": features})
+            if not data:
+                break
 
-                    # Handle tweet wrapper variants
-                    tweet_data = tweet_result.get("tweet", tweet_result)
-                    legacy = tweet_data.get("legacy", tweet_data)
-                    tweet_id = tweet_data.get("rest_id") or legacy.get("id_str", "")
-                    raw_text = legacy.get("full_text") or legacy.get("text", "")
-                    user_core = tweet_data.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
+            user_result = data.get("data", {}).get("user", {}).get("result", {})
+            timeline = user_result.get("timeline") or user_result.get("timeline_v2") or {}
+            instructions = timeline.get("timeline", {}).get("instructions", []) if "timeline" in timeline else timeline.get("instructions", [])
 
-                    screen_name_found = user_core.get("screen_name", clean_user)
-                    author_name = user_core.get("name", screen_name_found)
-
-                    tweets.append({
-                        "tweet_id": str(tweet_id),
-                        "title": f"Tweet by @{screen_name_found}",
-                        "author": author_name,
-                        "username": screen_name_found,
-                        "text": clean_news_text(raw_text),
-                        "url": f"https://x.com/{screen_name_found}/status/{tweet_id}",
-                        "published_date": legacy.get("created_at", ""),
-                        "metrics": {
-                            "likes": legacy.get("favorite_count", 0),
-                            "retweets": legacy.get("retweet_count", 0),
-                            "replies": legacy.get("reply_count", 0),
-                        },
-                        "backend": "graphql_api"
-                    })
-                    if len(tweets) >= limit:
-                        return tweets
-        except Exception:
-            pass
+            page_records, cursor = self._collect(instructions, limit - len(tweets), seen, clean_user)
+            tweets.extend(page_records)
+            if not cursor:
+                break
 
         return tweets
 
     def search_tweets(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Searches Twitter for keyword queries using SearchTimeline or UserTweets delegation."""
-        # If query matches from:username or @username, route to get_user_tweets
+        """Searches Twitter for keyword queries, following the bottom cursor."""
         if query.startswith("from:"):
             target_user = query[5:].strip()
             return self.get_user_tweets(target_user, limit=limit)
         if query.startswith("@"):
             return self.get_user_tweets(query[1:].strip(), limit=limit)
 
-        variables = {
-            "rawQuery": query,
-            "count": limit,
-            "querySource": "typed_query",
-            "product": "Top"
-        }
         features = {
             "responsive_web_graphql_exclude_directive_enabled": True,
             "verified_phone_label_enabled": False,
             "responsive_web_home_pinned_timelines_enabled": True,
-            "responsive_web_enhance_cards_enabled": False
+            "responsive_web_enhance_cards_enabled": False,
         }
 
-        data = self._execute_get("SearchTimeline", {"variables": variables, "features": features})
-        if not data:
-            return []
+        tweets: List[Dict[str, Any]] = []
+        seen: set = set()
+        cursor = None
+        pages = 0
 
-        tweets = []
-        try:
-            instructions = data.get("data", {}).get("search_by_raw_query", {}).get("search_timeline", {}).get("timeline", {}).get("instructions", [])
-            for inst in instructions:
-                entries = inst.get("entries", [])
-                for entry in entries:
-                    content = entry.get("content", {})
-                    item_content = content.get("itemContent", {})
-                    tweet_result = item_content.get("tweet_results", {}).get("result", {})
+        while len(tweets) < limit and pages < MAX_TIMELINE_PAGES:
+            pages += 1
+            variables = {
+                "rawQuery": query,
+                "count": limit - len(tweets),
+                "querySource": "typed_query",
+                "product": "Top",
+            }
+            if cursor:
+                variables["cursor"] = cursor
 
-                    if not tweet_result:
-                        continue
+            data = self._execute("SearchTimeline", {"variables": variables, "features": features}, method="POST")
+            if not data:
+                break
 
-                    legacy = tweet_result.get("legacy", tweet_result)
-                    tweet_id = tweet_result.get("rest_id") or legacy.get("id_str", "")
-                    raw_text = legacy.get("full_text") or legacy.get("text", "")
-                    user_core = tweet_result.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
+            instructions = (
+                data.get("data", {})
+                .get("search_by_raw_query", {})
+                .get("search_timeline", {})
+                .get("timeline", {})
+                .get("instructions", [])
+            )
 
-                    screen_name = user_core.get("screen_name", "unknown")
-                    author_name = user_core.get("name", screen_name)
-
-                    tweets.append({
-                        "tweet_id": str(tweet_id),
-                        "title": f"Tweet by @{screen_name}",
-                        "author": author_name,
-                        "username": screen_name,
-                        "text": clean_news_text(raw_text),
-                        "url": f"https://x.com/{screen_name}/status/{tweet_id}",
-                        "published_date": legacy.get("created_at", ""),
-                        "metrics": {
-                            "likes": legacy.get("favorite_count", 0),
-                            "retweets": legacy.get("retweet_count", 0),
-                            "replies": legacy.get("reply_count", 0),
-                        },
-                        "backend": "graphql_api"
-                    })
-                    if len(tweets) >= limit:
-                        break
-        except Exception:
-            pass
+            page_records, cursor = self._collect(instructions, limit - len(tweets), seen, "unknown")
+            tweets.extend(page_records)
+            if not cursor:
+                break
 
         return tweets

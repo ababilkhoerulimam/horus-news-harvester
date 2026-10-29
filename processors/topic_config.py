@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 
 class TopicMeta(BaseModel):
@@ -47,6 +47,7 @@ class PortalEntry(BaseModel):
         return clean.split("/")[0].split(":")[0]
 
 
+
 class PortalsConfig(BaseModel):
     """Declarative portal targeting using presets, inclusions, and exclusions."""
     presets: List[str] = Field(default_factory=list, description="Catalog preset names (e.g. national_wire, all_66_catalog)")
@@ -59,6 +60,54 @@ class OutputConfig(BaseModel):
     format: str = Field(default="jsonl", description="Export format: jsonl, parquet, sqlite, duckdb")
     destination_path: Optional[str] = Field(default=None, description="Custom export destination")
     min_word_count: int = Field(default=50, description="Minimum word threshold for inclusion in DAPT corpus")
+    min_quality_chars: int = Field(
+        default=1000,
+        ge=0,
+        description="Bodies below this character count are kept but tagged quality='low'",
+    )
+
+
+class YouTubeSocialConfig(BaseModel):
+    """YouTube discovery and enrichment budget for one topic.
+
+    A cap of None means unlimited. Zero is rejected because the fetch path already
+    reads 0 as "fetch nothing", and two meanings for one value is a trap.
+    """
+    queries: List[str] = Field(default_factory=list, description="Search queries, e.g. \"timnas indonesia\"")
+    channels: List[str] = Field(default_factory=list, description="Channel handles or URLs to scan")
+    max_videos_per_run: int = Field(default=25, description="Cap on videos enriched per run")
+    max_comments_per_video: Optional[int] = Field(default=None, description="Cap on root comments per video, None for unlimited")
+    max_replies_per_comment: Optional[int] = Field(default=None, description="Cap on replies per root comment, None for unlimited")
+    max_runtime_seconds: Optional[int] = Field(default=None, description="Wall-clock budget per run, None for unlimited")
+    max_seconds_per_video: Optional[int] = Field(default=None, description="Soft stop per video, None for unlimited")
+    video_workers: int = Field(default=4, ge=1, description="Videos harvested concurrently")
+    reply_workers: int = Field(default=4, ge=1, description="Threads used to fetch reply threads")
+    request_min_interval_ms: int = Field(default=250, ge=0, description="Minimum gap between InnerTube requests")
+    progress_every: int = Field(default=500, ge=1, description="Log progress every N comments")
+    yt_dlp_max_comments: int = Field(default=20000, ge=1, description="Ceiling for the yt-dlp fallback, which buffers in memory")
+
+    @field_validator("max_comments_per_video", "max_replies_per_comment", "max_runtime_seconds", "max_seconds_per_video", mode="before")
+    @classmethod
+    def _reject_zero_cap(cls, value: Any) -> Any:
+        if value == 0:
+            raise ValueError("use null for unlimited, not 0")
+        if isinstance(value, int) and value < 0:
+            raise ValueError("cap must not be negative")
+        return value
+
+
+class TwitterSocialConfig(BaseModel):
+    """Twitter discovery budget for one topic."""
+    queries: List[str] = Field(default_factory=list)
+    handles: List[str] = Field(default_factory=list)
+    max_tweets_per_query: int = Field(default=50, description="Cap on tweets per query or handle")
+
+
+class SocialConfig(BaseModel):
+    """Social channel targets. Platforms with no targets are skipped, not failed."""
+    enabled: bool = Field(default=True, description="Run social harvest for this topic")
+    youtube: YouTubeSocialConfig = Field(default_factory=YouTubeSocialConfig)
+    twitter: TwitterSocialConfig = Field(default_factory=TwitterSocialConfig)
 
 
 class TopicConfig(BaseModel):
@@ -71,6 +120,7 @@ class TopicConfig(BaseModel):
     portals: Optional[PortalsConfig] = Field(default=None, description="Modern preset-driven portal configuration")
     target_portals: Optional[Dict[str, Any]] = Field(default=None, description="Legacy portal categorization map")
     output: Optional[OutputConfig] = Field(default_factory=OutputConfig)
+    social: Optional[SocialConfig] = Field(default=None, description="Social channel targets (YouTube, Twitter)")
 
     def get_keywords(self) -> List[str]:
         """Flattens, lowercases, strips, and deduplicates all topic keywords."""

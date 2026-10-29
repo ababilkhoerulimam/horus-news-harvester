@@ -3,10 +3,9 @@ Portal News Channel for Indonesian Sports.
 Implements multi-backend fallback: RSS feeds -> Jina Reader -> Direct HTTP.
 """
 
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple
 import urllib.request
 import urllib.parse
-from urllib.parse import urlparse, urljoin
 import json
 import html as html_lib
 import re
@@ -17,6 +16,7 @@ from backends.jina_reader import JinaReaderBackend
 from backends.rss_parser import RssParserBackend, SPORT_RSS_FEEDS
 from backends.headless_browser import HeadlessBrowserBackend, is_spa_skeleton
 from processors.cleaner import clean_news_text
+from processors.extraction_rules import apply_rule, rules_for
 from processors.http_client import default_http_client
 
 try:
@@ -25,6 +25,30 @@ try:
 except ImportError:
     trafilatura = None
     HAS_TRAFILATURA = False
+
+
+_SINGLE_PAGE_PORTALS = {
+    "detik.com": ("single=1", False),
+    "sindonews.com": ("page=all", False),
+    "kompas.com": ("page=all", True),
+    "tribunnews.com": ("page=all", True),
+    "bolasport.com": ("page=all", True),
+    "bola.com": ("page=all", True),
+    "bola.net": ("page=all", True),
+    "inews.id": ("page=all", True),
+    "liputan6.com": ("page=all", True),
+    "suara.com": ("page=all", True),
+    "merdeka.com": ("page=all", True),
+    "tempo.co": ("page=all", True),
+    "jawapos.com": ("page=all", True),
+    "okezone.com": ("page=all", True),
+    "viva.co.id": ("page=all", True),
+    "grid.id": ("page=all", True),
+    "jpnn.com": ("page=all", True),
+}
+
+_PAGE_SUFFIX_PATTERN = re.compile(r"/\d{1,2}(\?|$)")
+_PAGE_PARAM_PATTERN = re.compile(r"[?&](?:page|showpage)=\d+")
 
 
 def normalize_portal_url(url: str) -> str:
@@ -36,52 +60,19 @@ def normalize_portal_url(url: str) -> str:
     if not clean_url:
         return ""
 
-    # Detik: ?single=1 renders full text on one page
-    if "detik.com" in clean_url:
-        if "single=1" not in clean_url:
-            clean_url = re.sub(r"/\d{1,2}(\?|$)", r"\1", clean_url)
-            clean_url = re.sub(r"([?&])page=\d+", "", clean_url).rstrip("&?")
-            sep = "&" if "?" in clean_url else "?"
-            return f"{clean_url}{sep}single=1"
-        return clean_url
-
-    # Sindonews: supports ?page=all or ?showpage=all
-    if "sindonews.com" in clean_url:
-        if "page=all" not in clean_url and "showpage=all" not in clean_url:
-            clean_url = re.sub(r"/\d{1,2}(\?|$)", r"\1", clean_url)
-            clean_url = re.sub(r"([?&])(?:page|showpage)=\d+", "", clean_url).rstrip("&?")
-            sep = "&" if "?" in clean_url else "?"
-            return f"{clean_url}{sep}page=all"
-        return clean_url
-
-    # Portals supporting ?page=all parameter
-    single_page_portals = (
-        "kompas.com",
-        "tribunnews.com",
-        "bolasport.com",
-        "bola.com",
-        "bola.net",
-        "inews.id",
-        "liputan6.com",
-        "suara.com",
-        "merdeka.com",
-        "tempo.co",
-        "jawapos.com",
-        "okezone.com",
-        "viva.co.id",
-        "grid.id",
-        "jpnn.com",
-    )
-    if any(domain in clean_url for domain in single_page_portals):
-        if "page=all" not in clean_url and not clean_url.endswith("/all"):
-            clean_url = re.sub(r"/\d{1,2}(\?|$)", r"\1", clean_url)
-            clean_url = re.sub(r"([?&])page=\d+", "", clean_url).rstrip("&?")
-            sep = "&" if "?" in clean_url else "?"
-            return f"{clean_url}{sep}page=all"
-        return clean_url
+    for domain, (param, honor_all_suffix) in _SINGLE_PAGE_PORTALS.items():
+        if domain not in clean_url:
+            continue
+        if param in clean_url:
+            return clean_url
+        if honor_all_suffix and clean_url.endswith("/all"):
+            return clean_url
+        clean_url = _PAGE_SUFFIX_PATTERN.sub(r"\1", clean_url)
+        clean_url = _PAGE_PARAM_PATTERN.sub("", clean_url).rstrip("&?")
+        sep = "&" if "?" in clean_url else "?"
+        return f"{clean_url}{sep}{param}"
 
     return clean_url
-
 
 def find_next_page_url(html: str, current_url: str) -> Optional[str]:
     """
@@ -144,10 +135,21 @@ def find_next_page_url(html: str, current_url: str) -> Optional[str]:
     return None
 
 
-def extract_clean_article_text(html: str) -> str:
+def _domain_of(url: str) -> str:
+    """Returns the bare domain used for extraction rule lookup."""
+    try:
+        return urlparse(url).netloc.replace("www.", "").lower()
+    except Exception:
+        return ""
+
+
+def extract_clean_article_text(html: str, domain: Optional[str] = None) -> str:
     """
     Extracts article text from HTML, prioritizing trafilatura for clean body
     extraction, falling back to regex tag stripping and known container matching.
+
+    domain, when given, enables the verified per-domain rule from
+    processors/extraction_rules.py. Without a rule, behaviour is unchanged.
     """
     if not html:
         return ""
@@ -175,7 +177,13 @@ def extract_clean_article_text(html: str) -> str:
         except Exception:
             pass
 
-    # 1. Primary: Trafilatura (cleans CSS, inline JS, ad widgets, nav links for DAPT NLP)
+    # 1. Per-domain rule: a verified container or the Next.js payload beats any guess
+    if domain:
+        rule_text = apply_rule(html, rules_for(domain))
+        if rule_text:
+            return rule_text
+
+    # 2. Primary: Trafilatura (cleans CSS, inline JS, ad widgets, nav links for DAPT NLP)
     if HAS_TRAFILATURA and trafilatura is not None:
         try:
             # ponytail: standard trafilatura extraction, add custom lxml xpath if specific portal structure fails
@@ -193,7 +201,7 @@ def extract_clean_article_text(html: str) -> str:
         except Exception:
             pass
 
-    # 2. Fallback: Strip non-content blocks: script, style, noscript, header, footer, nav, aside
+    # 3. Fallback: Strip non-content blocks: script, style, noscript, header, footer, nav, aside
     cleaned = re.sub(
         r"<(?:script|style|noscript|header|footer|nav|aside)[^>]*>.*?</(?:script|style|noscript|header|footer|nav|aside)>",
         " ",
@@ -202,7 +210,7 @@ def extract_clean_article_text(html: str) -> str:
     )
     cleaned = re.sub(r"<!--.*?-->", " ", cleaned, flags=re.DOTALL)
 
-    # 3. Try known Indonesian news article containers to exclude sidebars and comment widgets
+    # 4. Try known Indonesian news article containers to exclude sidebars and comment widgets
     article_patterns = (
         r'<div[^>]+class=["\'][^"\']*(?:detail__body-text|itp_bodycontent|read__content|txt-article|article-content-body|n-detail-content|detail-konten|entry-content|post-content)[^"\']*["\'][^>]*>(.*?)</div>',
         r'<article[^>]*>(.*?)</article>',
@@ -217,7 +225,7 @@ def extract_clean_article_text(html: str) -> str:
             if len(cleaned_text) >= 150:
                 return cleaned_text
 
-    # 4. Fallback: extract from entire page
+    # 5. Fallback: extract from entire page
     raw_text = re.sub(r"<[^>]+>", " ", cleaned)
     return clean_news_text(raw_text)
 
@@ -373,7 +381,7 @@ class PortalNewsChannel(SportsChannel):
                     status, html = self.curl.fetch(normalized_url, proxy=proxy)
                     if status == 200 and html:
                         if not is_cloudflare_challenge(status, html):
-                            clean_content = extract_clean_article_text(html)
+                            clean_content = extract_clean_article_text(html, _domain_of(normalized_url))
                             if clean_content and len(clean_content) >= 100:
                                 return {
                                     "url": normalized_url,
@@ -424,7 +432,7 @@ class PortalNewsChannel(SportsChannel):
                         if page_idx == 0:
                             raw_html_first_page = html
 
-                        clean_content = extract_clean_article_text(html)
+                        clean_content = extract_clean_article_text(html, _domain_of(current_url))
                         if clean_content:
                             content_parts.append(clean_content)
 

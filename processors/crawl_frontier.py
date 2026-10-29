@@ -10,7 +10,9 @@ from collections import defaultdict, deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Set, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
+
+from processors.sqlite_util import connect_wal
 
 
 DEFAULT_FRONTIER_DB = "data/state/crawl_frontier.db"
@@ -34,16 +36,13 @@ class CrawlFrontier:
 
     @contextmanager
     def _connection(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path), timeout=60.0)
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        conn.execute("PRAGMA busy_timeout = 60000;")
-        conn.row_factory = sqlite3.Row
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+        with connect_wal(
+            self.db_path,
+            timeout=60.0,
+            row_factory=sqlite3.Row,
+            extra_pragmas=("PRAGMA busy_timeout = 60000;",),
+        ) as conn:
+            yield conn
 
     def _init_db(self) -> None:
         with self._connection() as conn:

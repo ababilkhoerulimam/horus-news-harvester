@@ -11,7 +11,7 @@ import sqlite3
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 
 DEFAULT_CONFIG_PATH = Path("config/twitter_session.json")
@@ -71,6 +71,93 @@ def find_firefox_profiles() -> list[Path]:
     return unique_candidates
 
 
+def _profile_priority(profile: Path) -> int:
+    """Orders profiles so the daily-driver one is read first."""
+    if "default-release" in profile.name:
+        return 0
+    if "default" in profile.name:
+        return 1
+    return 2
+
+
+def _read_cookie_rows(
+    profile: Path,
+    domains: Sequence[str],
+    names: Optional[Sequence[str]] = None,
+) -> Dict[str, Dict[str, str]]:
+    """Reads matching cookies from one profile, keyed by host then cookie name.
+
+    The database is copied to a temporary file first because Firefox keeps it locked
+    while running. Any failure yields an empty mapping rather than raising, so the
+    caller can move on to the next profile.
+    """
+    cookie_db = profile / "cookies.sqlite"
+    if not cookie_db.exists() or not domains:
+        return {}
+
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
+    found: Dict[str, Dict[str, str]] = {}
+    try:
+        shutil.copy2(cookie_db, tmp_path)
+        conn = sqlite3.connect(str(tmp_path), timeout=10.0)
+        try:
+            conditions = " OR ".join("host LIKE ?" for _ in domains)
+            params: list = [f"%{domain}" for domain in domains]
+            if names:
+                placeholders = ",".join("?" for _ in names)
+                conditions = f"({conditions}) AND name IN ({placeholders})"
+                params.extend(names)
+            query = f"SELECT host, name, value FROM moz_cookies WHERE {conditions};"
+            for host, name, value in conn.execute(query, params).fetchall():
+                found.setdefault(host, {})[name] = value
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+    return found
+
+
+def _extract_with_profile(
+    domains: Sequence[str],
+    names: Optional[Sequence[str]] = None,
+    profile: Optional[Path] = None,
+) -> Tuple[Dict[str, Dict[str, str]], Optional[str]]:
+    """Returns the cookies and the name of the profile they came from."""
+    if profile is not None:
+        candidate = Path(profile)
+        found = _read_cookie_rows(candidate, domains, names)
+        return (found, candidate.name) if found else ({}, None)
+
+    profiles = sorted(find_firefox_profiles(), key=_profile_priority)
+    for candidate in profiles:
+        found = _read_cookie_rows(candidate, domains, names)
+        if found:
+            return found, candidate.name
+    return {}, None
+
+
+def extract_cookies(
+    domains: Sequence[str],
+    names: Optional[Sequence[str]] = None,
+    profile: Optional[Path] = None,
+) -> Dict[str, Dict[str, str]]:
+    """Returns {host: {cookie_name: value}} for every cookie matching the domains.
+
+    Domains match as a suffix, so "youtube.com" also picks up ".youtube.com" and
+    "www.youtube.com". names, when given, narrows the result to those cookie names.
+    """
+    cookies, _ = _extract_with_profile(domains, names, profile)
+    return cookies
+
+
 def extract_firefox_twitter_tokens() -> Optional[Dict[str, str]]:
     """
     Extracts auth_token and ct0 from environment variables or Firefox's cookies.sqlite database.
@@ -87,55 +174,21 @@ def extract_firefox_twitter_tokens() -> Optional[Dict[str, str]]:
             "profile": "environment_variables"
         }
 
-    # 2. Browser profile discovery
-    profiles = find_firefox_profiles()
-    if not profiles:
-        return None
+    # 2. Browser profile discovery, same query shape as before but through the generic reader
+    found, profile_name = _extract_with_profile(
+        ("x.com", "twitter.com"), ("auth_token", "ct0")
+    )
+    tokens: Dict[str, str] = {}
+    for host_cookies in found.values():
+        tokens.update(host_cookies)
 
-    # Prioritize default or default-release profile
-    profiles.sort(key=lambda p: 0 if "default-release" in p.name else (1 if "default" in p.name else 2))
-
-    for profile in profiles:
-        cookie_db = profile / "cookies.sqlite"
-        if not cookie_db.exists():
-            continue
-
-        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-
-        try:
-            # Copy to temp to bypass SQLite locked error if browser is currently open
-            shutil.copy2(cookie_db, tmp_path)
-            conn = sqlite3.connect(str(tmp_path), timeout=10.0)
-            cur = conn.cursor()
-
-            query = """
-                SELECT name, value FROM moz_cookies
-                WHERE (host LIKE '%x.com' OR host LIKE '%twitter.com')
-                  AND name IN ('auth_token', 'ct0');
-            """
-            cur.execute(query)
-            tokens = {}
-            for row in cur.fetchall():
-                tokens[row[0]] = row[1]
-            conn.close()
-
-            if "auth_token" in tokens and "ct0" in tokens:
-                return {
-                    "auth_token": tokens["auth_token"],
-                    "ct0": tokens["ct0"],
-                    "profile": profile.name,
-                    "extracted_at": datetime.now(timezone.utc).isoformat()
-                }
-        except Exception:
-            pass
-        finally:
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-
+    if "auth_token" in tokens and "ct0" in tokens:
+        return {
+            "auth_token": tokens["auth_token"],
+            "ct0": tokens["ct0"],
+            "profile": profile_name,
+            "extracted_at": datetime.now(timezone.utc).isoformat()
+        }
     return None
 
 
