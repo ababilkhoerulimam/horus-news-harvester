@@ -259,6 +259,10 @@ SLOW_PORTAL_DOMAINS = {
     "bantennews.co.id",
     "fajar.co.id",
     "beritajatim.com",
+    "rri.co.id",
+    "pikiran-rakyat.com",
+    "merahputih.com",
+    "suaramerdeka.com",
 }
 
 NON_FOOTBALL_SPORTS = [
