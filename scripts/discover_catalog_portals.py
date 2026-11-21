@@ -32,6 +32,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("catalog_discovery")
 
 
+def standard_sitemap_candidates(sports_host: str, domain: str) -> List[str]:
+    """Generic sitemap URLs to try when the fingerprint lists none.
+
+    wp-sitemap.xml is the WordPress 5.5+ default and the only sitemap some
+    portals serve; without it those portals yield zero articles.
+    """
+    return [
+        f"{sports_host}/sitemap.xml",
+        f"{sports_host}/sitemap_news.xml",
+        f"{sports_host}/post-sitemap.xml",
+        f"{sports_host}/wp-sitemap.xml",
+        f"https://{domain}/sitemap.xml",
+        f"https://{domain}/sitemap_news.xml",
+        f"https://{domain}/post-sitemap.xml",
+        f"https://{domain}/wp-sitemap.xml",
+    ]
+
+
 def run_catalog_discovery(
     catalog_file: str = "config/portals_catalog.json",
     fingerprints_file: str = "config/portal_fingerprints.json",
@@ -107,14 +125,7 @@ def run_catalog_discovery(
         parsed_sports = urlparse(sports_url)
         sports_host = f"{parsed_sports.scheme}://{parsed_sports.netloc}"
 
-        candidates = [
-            f"{sports_host}/sitemap.xml",
-            f"{sports_host}/sitemap_news.xml",
-            f"{sports_host}/post-sitemap.xml",
-            f"https://{domain}/sitemap.xml",
-            f"https://{domain}/sitemap_news.xml",
-            f"https://{domain}/post-sitemap.xml",
-        ]
+        candidates = standard_sitemap_candidates(sports_host, domain)
         for c in candidates:
             if c not in sitemaps_to_try:
                 sitemaps_to_try.append(c)

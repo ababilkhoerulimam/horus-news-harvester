@@ -798,8 +798,7 @@
     "has_wp_json": true,
     "wp_json_endpoint": "https://www.niaga.asia/wp-json/wp/v2/posts",
     "active_sitemaps": [
-      "https://www.niaga.asia/sitemap.xml",
-      "https://niaga.asia/sitemap.xml"
+      "https://www.niaga.asia/wp-sitemap.xml"
     ],
     "archive_pattern": "{base}/search/2026-04-15",
     "waf_challenge": false,

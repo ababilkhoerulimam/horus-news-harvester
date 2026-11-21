@@ -10,7 +10,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +25,27 @@ probe_client = ResilientHttpClient(enable_jitter=False)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("fingerprint")
+
+
+def candidate_sitemaps(base_host: str, domain: str) -> List[str]:
+    """Sitemap URLs to probe for one portal, in priority order.
+
+    wp-sitemap.xml is the WordPress 5.5+ default and the only sitemap some
+    portals serve, so it is probed alongside the generic index names. It is
+    listed after the news sitemaps because those carry titles and dates.
+    """
+    return [
+        f"{base_host}/sitemap.xml",
+        f"{base_host}/sitemap_news.xml",
+        f"{base_host}/sitemap-news.xml",
+        f"{base_host}/sitemap_index.xml",
+        f"{base_host}/post-sitemap.xml",
+        f"{base_host}/wp-sitemap.xml",
+        f"https://{domain}/sitemap.xml",
+        f"https://{domain}/sitemap_news.xml",
+        f"https://{domain}/sitemap-news.xml",
+        f"https://{domain}/wp-sitemap.xml",
+    ]
 
 
 def probe_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
@@ -75,18 +96,8 @@ def probe_portal(portal: Dict[str, Any]) -> Dict[str, Any]:
             pass
 
     # 3. Sitemap discovery
-    candidate_sitemaps = [
-        f"{base_host}/sitemap.xml",
-        f"{base_host}/sitemap_news.xml",
-        f"{base_host}/sitemap-news.xml",
-        f"{base_host}/sitemap_index.xml",
-        f"{base_host}/post-sitemap.xml",
-        f"https://{domain}/sitemap.xml",
-        f"https://{domain}/sitemap_news.xml",
-        f"https://{domain}/sitemap-news.xml",
-    ]
     seen_sm = set()
-    for sm_url in candidate_sitemaps:
+    for sm_url in candidate_sitemaps(base_host, domain):
         if sm_url in seen_sm:
             continue
         seen_sm.add(sm_url)

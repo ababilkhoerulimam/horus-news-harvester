@@ -34,6 +34,24 @@ CATALOG_PATH = Path("config/portals_catalog.json")
 FINGERPRINTS_PATH = Path("config/portal_fingerprints.json")
 
 
+def _preferred_sitemap(active_sitemaps: List[str]) -> Optional[str]:
+    """Picks the sitemap to use from a fingerprint's list.
+
+    A root /sitemap.xml on a WordPress site is often a stale export from a
+    third-party generator; niaga.asia's held only the homepage while
+    wp-sitemap.xml listed 23 child sitemaps. A news sitemap keeps priority
+    because it carries titles and publication dates.
+    """
+    if not active_sitemaps:
+        return None
+    first = active_sitemaps[0]
+    if first.rstrip("/").endswith("/sitemap.xml"):
+        for candidate in active_sitemaps:
+            if "wp-sitemap" in candidate:
+                return candidate
+    return first
+
+
 class PortalCatalogRegistry:
     """In-memory index of all 66 fingerprinted Indonesian portals."""
 
@@ -99,10 +117,8 @@ class PortalCatalogRegistry:
         # 2. Determine endpoints
         sitemap_url = ovr.get("sitemap_url")
         if not sitemap_url:
-            active_sitemaps = fp.get("active_sitemaps", [])
-            if active_sitemaps:
-                sitemap_url = active_sitemaps[0]
-            else:
+            sitemap_url = _preferred_sitemap(fp.get("active_sitemaps", []))
+            if not sitemap_url:
                 sitemap_url = f"https://{dom}/sitemap.xml"
 
         wp_api_base = ovr.get("wp_api_base")

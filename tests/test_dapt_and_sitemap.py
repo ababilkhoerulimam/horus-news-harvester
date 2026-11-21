@@ -17,6 +17,7 @@ from processors.dapt import (
     format_corpus_summary,
     sanitize_dapt_text,
 )
+from processors.portal_catalog import PortalCatalogRegistry
 from scripts.sitemap_backfill import (
     generate_portal_archive_urls,
     parse_sitemap_xml,
@@ -405,6 +406,88 @@ class ChannelExtractRecordTests(unittest.TestCase):
 
         self.assertIsNone(record)
         self.assertEqual(error, "blocked")
+
+
+class SitemapPreferenceTests(unittest.TestCase):
+    """WordPress's own sitemap must beat a stale root /sitemap.xml.
+
+    niaga.asia's fingerprint pointed at a 453-byte export that listed only the
+    homepage, so every backfill for that portal found zero articles.
+    """
+
+    def _resolve(self, active_sitemaps):
+        with tempfile.TemporaryDirectory() as tmp:
+            fingerprints = Path(tmp) / "fingerprints.json"
+            fingerprints.write_text(
+                json.dumps([{"domain": "example.com", "active_sitemaps": active_sitemaps}]),
+                encoding="utf-8",
+            )
+            registry = PortalCatalogRegistry(
+                catalog_file=Path(tmp) / "absent_catalog.json",
+                fingerprints_file=fingerprints,
+            )
+        return registry.resolve_domain("example.com")
+
+    def test_wp_sitemap_is_preferred_over_a_stale_entry(self):
+        portal = self._resolve([
+            "https://example.com/sitemap.xml",
+            "https://example.com/wp-sitemap.xml",
+        ])
+
+        self.assertEqual(portal.sitemap_url, "https://example.com/wp-sitemap.xml")
+
+    def test_news_sitemap_keeps_priority_over_wp_sitemap(self):
+        portal = self._resolve([
+            "https://example.com/sitemap-news.xml",
+            "https://example.com/wp-sitemap.xml",
+        ])
+
+        self.assertEqual(portal.sitemap_url, "https://example.com/sitemap-news.xml")
+
+    def test_first_entry_is_used_when_no_wp_sitemap_exists(self):
+        portal = self._resolve([
+            "https://example.com/sitemap_index.xml",
+            "https://example.com/post-sitemap.xml",
+        ])
+
+        self.assertEqual(portal.sitemap_url, "https://example.com/sitemap_index.xml")
+
+    def test_missing_active_sitemaps_falls_back_to_sitemap_xml(self):
+        portal = self._resolve([])
+
+        self.assertEqual(portal.sitemap_url, "https://example.com/sitemap.xml")
+
+
+class SitemapCandidateTests(unittest.TestCase):
+    """Both discovery paths must probe wp-sitemap.xml.
+
+    Without it a WordPress 5.5+ portal that serves only wp-sitemap.xml is
+    invisible to discovery, which is the state niaga.asia was in.
+    """
+
+    def test_fingerprint_candidates_include_wp_sitemap(self):
+        # Imported here because the script configures root logging on import.
+        from scripts.fingerprint_portals import candidate_sitemaps
+
+        candidates = candidate_sitemaps("https://www.example.com", "example.com")
+
+        self.assertIn("https://www.example.com/wp-sitemap.xml", candidates)
+        self.assertIn("https://example.com/wp-sitemap.xml", candidates)
+
+    def test_catalog_discovery_candidates_include_wp_sitemap(self):
+        from scripts.discover_catalog_portals import standard_sitemap_candidates
+
+        candidates = standard_sitemap_candidates("https://sport.example.com", "example.com")
+
+        self.assertIn("https://sport.example.com/wp-sitemap.xml", candidates)
+        self.assertIn("https://example.com/wp-sitemap.xml", candidates)
+
+    def test_catalog_discovery_still_falls_back_to_sitemap_xml(self):
+        from scripts.discover_catalog_portals import standard_sitemap_candidates
+
+        candidates = standard_sitemap_candidates("https://sport.example.com", "example.com")
+
+        self.assertEqual(candidates[0], "https://sport.example.com/sitemap.xml")
 
 
 if __name__ == "__main__":
