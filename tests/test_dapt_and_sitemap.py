@@ -3,6 +3,7 @@ Unit tests for Trafilatura text extraction, XML sitemap backfilling,
 and NusaBERT DAPT corpus preparation.
 """
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -287,6 +288,69 @@ class TestMultiPortalArchiveAndWPRest(unittest.TestCase):
             )
             self.assertEqual(res["status"], "success")
             self.assertEqual(res["collected"], 0)
+
+
+class BackfillProcessItemTests(unittest.TestCase):
+    """Pins the record shape shared by the core workers and the in-process runner."""
+
+    class _Sink:
+        def __init__(self):
+            self.emitted = []
+            self.failed = []
+
+        async def emit(self, record):
+            self.emitted.append(record)
+
+        async def fail(self, url, reason):
+            self.failed.append((url, reason))
+
+    def _run(self, result):
+        from scripts.sitemap_backfill import _backfill_process_item
+
+        sink = self._Sink()
+
+        async def fake_fetch(session, backend, channel, url, **kwargs):
+            return result
+
+        with patch("scripts.sitemap_backfill.fetch_article", side_effect=fake_fetch):
+            process = _backfill_process_item(None, None, None, 150)
+            asyncio.run(process({"url": "https://detik.com/a", "title": "Judul"}, sink))
+        return sink
+
+    def test_success_emits_the_news_record_schema(self):
+        from processors.fetch_pipeline import FetchResult
+
+        sink = self._run(
+            FetchResult("x" * 20, "direct_http", None, "Judul", "2026-01-01T00:00:00Z", 20, "low")
+        )
+
+        self.assertEqual(sink.failed, [])
+        self.assertEqual(len(sink.emitted), 1)
+        self.assertEqual(
+            set(sink.emitted[0]),
+            {
+                "url",
+                "title",
+                "published_date",
+                "archive_date",
+                "content",
+                "source",
+                "backend",
+                "quality",
+                "content_chars",
+                "harvested_at",
+            },
+        )
+        self.assertEqual(sink.emitted[0]["quality"], "low")
+        self.assertEqual(sink.emitted[0]["content_chars"], 20)
+
+    def test_failed_fetch_reports_the_reason_without_emitting(self):
+        from processors.fetch_pipeline import FetchResult
+
+        sink = self._run(FetchResult(None, None, "HTTP 404 Not Found"))
+
+        self.assertEqual(sink.emitted, [])
+        self.assertEqual(sink.failed, [("https://detik.com/a", "HTTP 404 Not Found")])
 
 
 if __name__ == "__main__":

@@ -816,20 +816,13 @@ def fetch_wordpress_rest_articles(
     return collected
 
 
-async def _async_backfill_worker_loop(
-    worker_id: int,
-    output_part_file: str,
-    frontier_db: str,
-    concurrency: int = 30,
-    limit_per_worker: int = 50000,
-    min_content_length: int = 150,
-    portal_filter: Optional[str] = None,
+def _backfill_process_item(
+    session,
+    curl_backend,
+    channel,
+    min_content_length: int,
 ):
-    """Event loop for one CPU core backfill process, streaming requests via AsyncQueue (direct-first)."""
-    curl_backend = CurlImpersonateBackend()
-    channel = PortalNewsChannel()
-    frontier = CrawlFrontier(frontier_db, batch_size=50)
-    session = curl_backend.create_async_session()
+    """Builds the fetch-and-record step shared by the core workers and the runner."""
 
     async def _process_item(cand: Dict[str, Any], sink) -> None:
         url = cand["url"]
@@ -855,6 +848,26 @@ async def _async_backfill_worker_loop(
             quality=result.quality,
             content_chars=result.content_chars,
         ))
+
+    return _process_item
+
+
+async def _async_backfill_worker_loop(
+    worker_id: int,
+    output_part_file: str,
+    frontier_db: str,
+    concurrency: int = 30,
+    limit_per_worker: int = 50000,
+    min_content_length: int = 150,
+    portal_filter: Optional[str] = None,
+):
+    """Event loop for one CPU core backfill process, streaming requests via AsyncQueue (direct-first)."""
+    curl_backend = CurlImpersonateBackend()
+    channel = PortalNewsChannel()
+    frontier = CrawlFrontier(frontier_db, batch_size=50)
+    session = curl_backend.create_async_session()
+
+    _process_item = _backfill_process_item(session, curl_backend, channel, min_content_length)
 
     try:
         await run_async_worker(
@@ -1089,30 +1102,7 @@ def run_sitemap_backfill(
                 nonlocal written_count
                 session = curl_backend.create_async_session()
 
-                async def _process_item(cand: Dict[str, Any], sink) -> None:
-                    url = cand["url"]
-                    norm_url = normalize_portal_url(url)
-                    result = await fetch_article(
-                        session,
-                        curl_backend,
-                        channel,
-                        norm_url,
-                        min_content_length=min_content_length,
-                        wp_api_base=wp_api_base_for(urlparse(norm_url).netloc.replace("www.", "")),
-                    )
-                    if result.content is None:
-                        await sink.fail(url, result.reason)
-                        return
-                    await sink.emit(build_news_record(
-                        url=url,
-                        title=cand.get("title") or result.title,
-                        published_date=cand.get("published_date") or result.published_date,
-                        archive_date=cand.get("archive_date", ""),
-                        content=result.content,
-                        backend=result.backend,
-                        quality=result.quality,
-                        content_chars=result.content_chars,
-                    ))
+                _process_item = _backfill_process_item(session, curl_backend, channel, min_content_length)
 
                 pending = [batch]
 
