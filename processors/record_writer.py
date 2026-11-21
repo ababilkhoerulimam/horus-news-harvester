@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
+from processors.crawl_frontier import is_terminal
+
 logger = logging.getLogger("record_writer")
 
 PROGRESS_EVERY = 50
@@ -115,8 +117,17 @@ class JsonlSink:
             logger.info("%s Harvested %s%s articles -> %s", self._label, written, self._progress_suffix(), self._output_name)
 
     async def fail(self, url: str, reason: str) -> None:
+        """Records a failed fetch, terminal or retryable.
+
+        This is the only place that decides terminality. A 404 and a rejected
+        body shape describe the page, so retrying them spends requests to get
+        the same answer; everything else keeps its retry budget.
+        """
         async with self._db_lock:
-            self._frontier.mark_failed(url, error=reason)
+            if is_terminal(reason):
+                self._frontier.mark_dead(url, reason)
+            else:
+                self._frontier.mark_failed(url, error=reason)
 
     async def flush(self) -> None:
         async with self._file_lock:

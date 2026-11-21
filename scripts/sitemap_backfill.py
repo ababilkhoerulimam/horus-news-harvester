@@ -30,7 +30,12 @@ from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.ad_filter import is_ad_domain
 from processors.cleaner import normalize_article, normalize_timestamp
 from processors.content_policy import REJECT, shape_decision
-from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB, interleave_by_portal
+from processors.crawl_frontier import (
+    CrawlFrontier,
+    DEFAULT_FRONTIER_DB,
+    interleave_by_portal,
+    is_terminal,
+)
 from processors.fetch_pipeline import REASON_REJECTED, REASON_TOO_SHORT, fetch_article
 from processors.portal_catalog import wp_api_base_for
 from processors.http_client import default_http_client
@@ -1174,7 +1179,13 @@ def run_sitemap_backfill(
                     record, error = _channel_extract_record(cand, channel, min_content_length)
                     if record is None:
                         with db_lock:
-                            frontier.mark_failed(u, error=error)
+                            # Same routing as JsonlSink.fail: a rejected shape or
+                            # a 404 describes the page, so it is written terminal
+                            # instead of spending three retries on the same answer.
+                            if is_terminal(error):
+                                frontier.mark_dead(u, error)
+                            else:
+                                frontier.mark_failed(u, error=error)
                         return False
                     line = json.dumps(record, ensure_ascii=False) + "\n"
                     with file_lock:

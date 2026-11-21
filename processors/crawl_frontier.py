@@ -17,6 +17,21 @@ from processors.sqlite_util import connect_wal
 
 DEFAULT_FRONTIER_DB = "data/state/crawl_frontier.db"
 
+# Both selection queries below require retry_count < RETRY_LIMIT, so a row at
+# the limit is never handed out again. mark_dead writes that value directly as
+# a terminal marker; it is not an attempt count.
+RETRY_LIMIT = 3
+
+# Reasons that describe the page rather than the attempt. Retrying them costs a
+# request and returns the same answer.
+TERMINAL_REASON_PREFIXES = ("HTTP 404", "Content shape rejected")
+
+
+def is_terminal(reason: Optional[str]) -> bool:
+    """True when retrying the same URL cannot change the outcome."""
+    text = (reason or "").strip()
+    return any(text.startswith(prefix) for prefix in TERMINAL_REASON_PREFIXES)
+
 
 class CrawlFrontier:
     """
@@ -107,9 +122,9 @@ class CrawlFrontier:
         query = """
             SELECT url, portal, title, published_date, archive_date, retry_count
             FROM crawl_frontier
-            WHERE status = 'pending' OR (status = 'failed' AND retry_count < 3)
+            WHERE status = 'pending' OR (status = 'failed' AND retry_count < ?)
         """
-        params: List[Any] = []
+        params: List[Any] = [RETRY_LIMIT]
         if portal:
             query += " AND portal = ?"
             params.append(portal)
@@ -130,9 +145,9 @@ class CrawlFrontier:
         query = """
             SELECT url, portal, title, published_date, archive_date, retry_count
             FROM crawl_frontier
-            WHERE status = 'pending' OR (status = 'failed' AND retry_count < 3)
+            WHERE status = 'pending' OR (status = 'failed' AND retry_count < ?)
         """
-        params: List[Any] = []
+        params: List[Any] = [RETRY_LIMIT]
         if portal:
             query += " AND portal = ?"
             params.append(portal)
@@ -186,6 +201,69 @@ class CrawlFrontier:
             self._failed_buffer.append((now_iso, str(error)[:500], url))
             if immediate or len(self._failed_buffer) >= self.batch_size:
                 self._flush_failed_locked()
+
+    def mark_dead(self, url: str, reason: str = "") -> None:
+        """Marks a URL terminal in one write, bypassing the failure buffer.
+
+        `retry_count = RETRY_LIMIT` is the terminal marker: both selection
+        queries require a value below the limit, so the row is never handed out
+        again. The write is immediate on purpose — a buffered terminal write
+        lost to a crash would put the URL back in the queue it just left.
+        """
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._connection() as conn:
+            conn.execute("""
+                UPDATE crawl_frontier
+                SET status = 'failed',
+                    retry_count = ?,
+                    fetched_at = ?,
+                    error_message = ?
+                WHERE url = ?;
+            """, (RETRY_LIMIT, now_iso, str(reason)[:500], url))
+
+    def requeue_dead(self, before: str, reason_like: str = "") -> int:
+        """Returns terminal rows to the queue, bounded by date and optionally reason.
+
+        `before` is compared against fetched_at, so a requeue only revives rows
+        that died before that moment. `reason_like` is a SQL LIKE pattern, which
+        lets a caller revive one failure family after fixing its cause without
+        also reviving every other dead row.
+        """
+        query = """
+            UPDATE crawl_frontier
+            SET status = 'pending', retry_count = 0, error_message = NULL
+            WHERE status = 'failed'
+              AND retry_count >= ?
+              AND fetched_at IS NOT NULL
+              AND fetched_at < ?
+        """
+        params: List[Any] = [RETRY_LIMIT, before]
+        if reason_like:
+            query += " AND error_message LIKE ?"
+            params.append(reason_like)
+        with self._connection() as conn:
+            cur = conn.execute(query, params)
+            return cur.rowcount
+
+    def pending_with_errors(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Queued rows that already carry an error from an earlier attempt.
+
+        A row stuck this way was requeued without clearing its reason, or failed
+        before the current code path could classify it. It is not dead, but the
+        reason says why it will fail again if nothing changed.
+        """
+        self.flush()
+        with self._connection() as conn:
+            cur = conn.execute("""
+                SELECT url, portal, retry_count, error_message
+                FROM crawl_frontier
+                WHERE status = 'pending'
+                  AND error_message IS NOT NULL
+                  AND error_message != ''
+                ORDER BY retry_count ASC, discovered_at ASC
+                LIMIT ?;
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
 
     def flush(self) -> None:
         """Flushes buffered completed and failed items to SQLite in one transaction."""

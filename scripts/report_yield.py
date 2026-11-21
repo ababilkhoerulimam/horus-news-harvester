@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 from urllib.parse import urlparse
@@ -23,6 +25,8 @@ from urllib.parse import urlparse
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from processors.crawl_frontier import RETRY_LIMIT  # noqa: E402
 
 DEFAULT_RAW_DIR = Path("data/raw")
 
@@ -196,14 +200,70 @@ def _print_social(report: Dict[str, Any], top: int) -> None:
         print("stop reasons: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
 
 
+def frontier_report(db_path: str) -> Dict[str, Any]:
+    """Status, terminal reasons and stuck rows in one frontier database."""
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        status = Counter(row[0] for row in con.execute("SELECT status FROM crawl_frontier"))
+        retries = Counter(row[0] for row in con.execute("SELECT retry_count FROM crawl_frontier"))
+        dead = con.execute(
+            "SELECT error_message, COUNT(*) FROM crawl_frontier "
+            "WHERE status = 'failed' AND retry_count >= ? "
+            "GROUP BY error_message ORDER BY COUNT(*) DESC",
+            (RETRY_LIMIT,),
+        ).fetchall()
+        stuck = con.execute(
+            "SELECT error_message, COUNT(*) FROM crawl_frontier "
+            "WHERE status = 'pending' AND error_message IS NOT NULL AND error_message != '' "
+            "GROUP BY error_message ORDER BY COUNT(*) DESC"
+        ).fetchall()
+    finally:
+        con.close()
+    return {
+        "channel": "frontier",
+        "db": str(db_path),
+        "rows": sum(status.values()),
+        "status": dict(status.most_common()),
+        "retry_distribution": dict(sorted(retries.items())),
+        "dead_by_reason": [[reason or "", count] for reason, count in dead],
+        "pending_errors": [[reason or "", count] for reason, count in stuck],
+        "pending_with_error": sum(count for _, count in stuck),
+    }
+
+
+def _print_frontier(report: Dict[str, Any], top: int) -> None:
+    print(
+        f"frontier: {report['db']} | rows={report['rows']}"
+        f" | pending_with_error={report['pending_with_error']}"
+    )
+    for name, count in report["status"].items():
+        print(f"status={name} | count={count}")
+    for retry, count in report["retry_distribution"].items():
+        print(f"retry_count={retry} | count={count}")
+    for reason, count in report["dead_by_reason"][:top]:
+        print(f"dead | reason={reason!r} | count={count}")
+    for reason, count in report["pending_errors"][:top]:
+        print(f"pending_error | reason={reason!r} | count={count}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Report harvest yield per domain and topic.")
     parser.add_argument("--channel", default="all", choices=["news", "youtube", "twitter", "all"])
     parser.add_argument("--raw-dir", default=str(DEFAULT_RAW_DIR))
+    parser.add_argument("--frontier", action="store_true", help="report one frontier database instead")
+    parser.add_argument("--db", default=None, help="frontier database path for --frontier")
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--min-records", type=int, default=300)
     parser.add_argument("--json", action="store_true", help="emit machine readable output")
     args = parser.parse_args()
+
+    if args.frontier:
+        report = frontier_report(args.db or str(REPO_ROOT / "data/state/crawl_frontier.db"))
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print_frontier(report, args.top)
+        return 0
 
     raw_dir = Path(args.raw_dir)
     reports: List[Dict[str, Any]] = []

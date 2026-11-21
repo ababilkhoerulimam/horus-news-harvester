@@ -3,14 +3,22 @@ Unit tests for Resumable SQLite CrawlFrontier, Date Archive HTML Index Parser,
 and Adaptive HTTP 429 Backoff & User-Agent Rotation.
 """
 
+import asyncio
+import io
 import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from processors.crawl_frontier import CrawlFrontier, interleave_by_portal
+from processors.crawl_frontier import (
+    RETRY_LIMIT,
+    CrawlFrontier,
+    interleave_by_portal,
+    is_terminal,
+)
 from processors.http_client import ResilientHttpClient
+from processors.record_writer import JsonlSink
 from scripts.sitemap_backfill import parse_archive_index_html
 
 
@@ -139,6 +147,128 @@ class TestCrawlFrontier(unittest.TestCase):
 
         summary = self.frontier.get_frontier_summary()
         self.assertEqual(summary["totals"]["completed"], 5)
+
+    def test_mark_dead_is_terminal(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        self.frontier.mark_dead("https://x/1", "HTTP 404 Not Found")
+
+        self.assertEqual(self.frontier.get_pending_batch(limit=10), [])
+        self.assertEqual(self.frontier.claim_pending_batch(limit=10), [])
+
+    def test_mark_dead_survives_claim_pending_batch(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        claimed = self.frontier.claim_pending_batch(limit=1)
+        self.assertEqual(len(claimed), 1)
+
+        self.frontier.mark_dead("https://x/1", "Content shape rejected")
+        self.frontier.reset_in_progress()
+
+        self.assertEqual(self.frontier.claim_pending_batch(limit=1), [])
+
+    def test_mark_dead_records_the_reason(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        self.frontier.mark_dead("https://x/1", "Content shape rejected")
+
+        with self.frontier._connection() as conn:
+            row = conn.execute(
+                "SELECT status, retry_count, error_message FROM crawl_frontier WHERE url = ?",
+                ("https://x/1",),
+            ).fetchone()
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["retry_count"], RETRY_LIMIT)
+        self.assertEqual(row["error_message"], "Content shape rejected")
+
+    def test_requeue_dead_resets_retry_count(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        self.frontier.mark_dead("https://x/1", "HTTP 404 Not Found")
+
+        requeued = self.frontier.requeue_dead("2999-01-01T00:00:00Z")
+        self.assertEqual(requeued, 1)
+
+        batch = self.frontier.get_pending_batch(limit=1)
+        self.assertEqual([row["url"] for row in batch], ["https://x/1"])
+        self.assertEqual(batch[0]["retry_count"], 0)
+
+    def test_requeue_dead_honours_the_date_bound(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        self.frontier.mark_dead("https://x/1", "HTTP 404 Not Found")
+
+        self.assertEqual(self.frontier.requeue_dead("2000-01-01T00:00:00Z"), 0)
+        self.assertEqual(len(self.frontier.get_pending_batch(limit=1)), 0)
+
+    def test_requeue_dead_can_filter_by_reason(self):
+        self.frontier.add_candidates(
+            [{"url": "https://x/1"}, {"url": "https://x/2"}], portal="p"
+        )
+        self.frontier.mark_dead("https://x/1", "HTTP 404 Not Found")
+        self.frontier.mark_dead("https://x/2", "Content shape rejected")
+
+        self.assertEqual(self.frontier.requeue_dead("2999-01-01T00:00:00Z", "%404%"), 1)
+        pending = {row["url"] for row in self.frontier.get_pending_batch(limit=10)}
+        self.assertEqual(pending, {"https://x/1"})
+
+    def test_pending_with_errors_lists_stuck_rows(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        with self.frontier._connection() as conn:
+            conn.execute(
+                "UPDATE crawl_frontier SET error_message = ? WHERE url = ?",
+                ("get_random_proxy is gone", "https://x/1"),
+            )
+
+        rows = self.frontier.pending_with_errors()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["error_message"], "get_random_proxy is gone")
+
+    def test_retry_limit_is_one_constant(self):
+        self.frontier.add_candidates([{"url": "https://x/1"}], portal="p")
+        self.frontier.mark_failed("https://x/1", error="boom", immediate=True)
+        self.assertEqual(len(self.frontier.get_pending_batch(limit=10)), 1)
+
+        with patch("processors.crawl_frontier.RETRY_LIMIT", 1):
+            self.assertEqual(self.frontier.get_pending_batch(limit=10), [])
+
+    def test_is_terminal_matches_by_prefix(self):
+        self.assertTrue(is_terminal("HTTP 404 Not Found"))
+        self.assertTrue(is_terminal("Content shape rejected"))
+        self.assertFalse(is_terminal("Content length below minimum threshold"))
+        self.assertFalse(is_terminal(""))
+        self.assertFalse(is_terminal(None))
+
+
+class TestJsonlSinkTerminalRouting(unittest.TestCase):
+    """JsonlSink.fail is the single place that decides terminality."""
+
+    class _Frontier:
+        def __init__(self):
+            self.dead = []
+            self.failed = []
+
+        def mark_dead(self, url, reason=""):
+            self.dead.append((url, reason))
+
+        def mark_failed(self, url, error=""):
+            self.failed.append((url, error))
+
+    def _sink(self):
+        self.frontier = self._Frontier()
+        return JsonlSink(io.StringIO(), self.frontier, "test", "out.jsonl")
+
+    def test_sink_fail_routes_a_404_to_mark_dead(self):
+        sink = self._sink()
+        asyncio.run(sink.fail("https://a", "HTTP 404 Not Found"))
+
+        self.assertEqual(self.frontier.dead, [("https://a", "HTTP 404 Not Found")])
+        self.assertEqual(self.frontier.failed, [])
+
+    def test_sink_fail_routes_a_short_body_to_mark_failed(self):
+        sink = self._sink()
+        asyncio.run(sink.fail("https://a", "Content length below minimum threshold"))
+
+        self.assertEqual(self.frontier.dead, [])
+        self.assertEqual(
+            self.frontier.failed,
+            [("https://a", "Content length below minimum threshold")],
+        )
 
 
 class TestArchiveIndexParser(unittest.TestCase):
