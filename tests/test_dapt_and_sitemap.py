@@ -511,7 +511,7 @@ class CatalogDiscoveryTests(unittest.TestCase):
             for i in range(count)
         ]
 
-    def _run(self, walk_side_effect, max_urls=5000):
+    def _run(self, walk_side_effect, max_urls=5000, fingerprints=None, wp_side_effect=None):
         from scripts.discover_catalog_portals import run_catalog_discovery
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -527,16 +527,18 @@ class CatalogDiscoveryTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            fingerprints = Path(tmp) / "fingerprints.json"
-            fingerprints.write_text("[]", encoding="utf-8")
+            fingerprints_path = Path(tmp) / "fingerprints.json"
+            fingerprints_path.write_text(json.dumps(fingerprints or []), encoding="utf-8")
 
             with patch("scripts.discover_catalog_portals.configure_proxy", return_value=(0, None)), \
-                    patch("scripts.discover_catalog_portals.fetch_sitemap_urls") as walk:
+                    patch("scripts.discover_catalog_portals.fetch_sitemap_urls") as walk, \
+                    patch("scripts.discover_catalog_portals.fetch_wordpress_rest_articles") as wp:
                 walk.side_effect = walk_side_effect
+                wp.side_effect = wp_side_effect or (lambda **kwargs: [])
                 with redirect_stdout(io.StringIO()):
                     result = run_catalog_discovery(
                         catalog_file=str(catalog),
-                        fingerprints_file=str(fingerprints),
+                        fingerprints_file=str(fingerprints_path),
                         frontier_db=str(Path(tmp) / "frontier.db"),
                         max_urls_per_portal=max_urls,
                     )
@@ -575,6 +577,58 @@ class CatalogDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["total_discovered"], expected)
         self.assertEqual(result["total_new_queued"], expected)
+
+    def test_sitemap_failure_is_recorded_and_the_run_continues(self):
+        counter = {"n": 0}
+
+        def walk(sitemap, **kwargs):
+            counter["n"] += 1
+            if counter["n"] == 1:
+                raise RuntimeError("boom")
+            return self._articles(f"s{counter['n']}", 2)
+
+        with self.assertLogs("catalog_discovery", level="ERROR") as logs:
+            result, _ = self._run(walk)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["total_failures"], 1)
+        self.assertEqual(
+            result["portal_stats"]["example"]["failures"], ["sitemap:RuntimeError"]
+        )
+        self.assertEqual(result["total_discovered"], (self._candidate_count() - 1) * 2)
+        self.assertTrue(any("sitemap failed for" in line for line in logs.output))
+
+    def test_wp_rest_failure_is_recorded(self):
+        fingerprints = [{
+            "domain": "example.com",
+            "has_wp_json": True,
+            "wp_json_endpoint": "https://example.com/wp-json/wp/v2/posts",
+        }]
+
+        def wp(**kwargs):
+            raise ValueError("bad payload")
+
+        with self.assertLogs("catalog_discovery", level="ERROR"):
+            result, _ = self._run(
+                lambda sitemap, **kwargs: self._articles("s", 1),
+                fingerprints=fingerprints,
+                wp_side_effect=wp,
+            )
+
+        self.assertEqual(result["total_failures"], 1)
+        self.assertEqual(
+            result["portal_stats"]["example"]["failures"], ["wp_rest:ValueError"]
+        )
+
+    def test_stage_failure_is_logged_at_error(self):
+        def walk(sitemap, **kwargs):
+            raise RuntimeError("boom")
+
+        with self.assertLogs("catalog_discovery", level="ERROR") as logs:
+            result, _ = self._run(walk)
+
+        self.assertTrue(any("sitemap failed for" in line for line in logs.output))
+        self.assertGreater(result["total_failures"], 0)
 
 
 if __name__ == "__main__":

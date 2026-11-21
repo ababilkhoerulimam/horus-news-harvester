@@ -50,6 +50,18 @@ def standard_sitemap_candidates(sports_host: str, domain: str) -> List[str]:
     ]
 
 
+def _record_stage_failure(stage: str, target: str, exc: Exception) -> str:
+    """Logs a best-effort stage failure with its traceback, returns a marker.
+
+    Discovery is best-effort per stage: one unreachable portal must not abort a
+    66-portal run. It is not silent either, because a run that lost a whole
+    portal is not the same as a run that found nothing, and a TypeError here
+    would otherwise read as an empty sitemap.
+    """
+    logger.error(f"{stage} failed for {target}: {type(exc).__name__}: {exc}", exc_info=True)
+    return f"{stage}:{type(exc).__name__}"
+
+
 def run_catalog_discovery(
     catalog_file: str = "config/portals_catalog.json",
     fingerprints_file: str = "config/portal_fingerprints.json",
@@ -91,7 +103,7 @@ def run_catalog_discovery(
 
     total_discovered_all = 0
     total_added_all = 0
-    portal_stats: Dict[str, Dict[str, int]] = {}
+    portal_stats: Dict[str, Any] = {}
 
     for portal_entry in portals:
         domain = portal_entry["domain"]
@@ -133,6 +145,7 @@ def run_catalog_discovery(
         # 3. WordPress REST API
         wp_endpoint = fp.get("wp_json_endpoint")
         discovered_articles: List[Dict[str, str]] = []
+        failures: List[str] = []
 
         if fp.get("has_wp_json") and wp_endpoint:
             try:
@@ -145,8 +158,8 @@ def run_catalog_discovery(
                 )
                 discovered_articles.extend(wp_items)
                 logger.info(f"WP-REST {domain}: found {len(wp_items)} articles")
-            except Exception as e:
-                logger.debug(f"WP-REST error for {domain}: {e}")
+            except Exception as exc:
+                failures.append(_record_stage_failure("wp_rest", domain, exc))
 
         # 4. Fetch sitemaps
         for sm in sitemaps_to_try:
@@ -161,8 +174,8 @@ def run_catalog_discovery(
                     max_depth=2,
                 )
                 discovered_articles.extend(sm_items)
-            except Exception as e:
-                logger.debug(f"Sitemap error for {sm}: {e}")
+            except Exception as exc:
+                failures.append(_record_stage_failure("sitemap", sm, exc))
 
         # 5. Direct desk scraping for portals with no/limited sitemaps (e.g. Antara, CNN, Tempo, Kumparan)
         if len(discovered_articles) < 10 and portal_entry.get("has_sports_desk"):
@@ -194,8 +207,8 @@ def run_catalog_discovery(
                                     "published_date": "",
                                     "archive_date": "",
                                 })
-            except Exception as e:
-                logger.debug(f"Direct desk scrape error for {domain}: {e}")
+            except Exception as exc:
+                failures.append(_record_stage_failure("desk_scrape", domain, exc))
 
         # Deduplicate within this portal run
         seen = set()
@@ -213,14 +226,17 @@ def run_catalog_discovery(
         portal_stats[p_name] = {
             "discovered": len(unique_articles),
             "new_queued": added,
+            "failures": failures,
         }
         print(f"[+] {p_name} ({domain}): discovered {len(unique_articles)} items ({added} new candidates queued in frontier)")
 
+    total_failures = sum(len(stats["failures"]) for stats in portal_stats.values())
     return {
         "status": "success",
         "total_portals_scanned": len(portals),
         "total_discovered": total_discovered_all,
         "total_new_queued": total_added_all,
+        "total_failures": total_failures,
         "portal_stats": portal_stats,
     }
 
