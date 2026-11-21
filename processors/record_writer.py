@@ -13,12 +13,11 @@ logger = logging.getLogger("record_writer")
 
 PROGRESS_EVERY = 50
 
-# Below this many characters an article body is a fragment, not an article.
-# Chosen from the 225k-record corpus, not guessed: fragment-heavy domains top out
-# at p75 = 596 (detik), 969 (kompas), 376 (inews), while healthy portals start at
-# p10 = 1694 (niaga) and 4293 (okezone). 1000 sits in that empty gap, so it flags
-# the broken domains (detik 90%, kompas 76%, inews 98%) and almost no healthy one
-# (okezone 9 of 34,430 records).
+# Deprecated name, kept so existing configs and callers still resolve. It no
+# longer gates anything: quality comes from the body's shape (content_policy),
+# and the only length gate is MIN_BODY_CHARS. Only build_news_record and
+# build_topic_record still consult it, as a fallback for callers that pass no
+# quality at all.
 MIN_QUALITY_CHARS = 1000
 
 
@@ -27,7 +26,11 @@ def _utc_stamp() -> str:
 
 
 def quality_of(content_chars: int, min_quality_chars: int = MIN_QUALITY_CHARS) -> str:
-    """Labels a body as "ok" or "low" so downstream can filter without re-reading it."""
+    """Legacy length rule: labels a body "ok" or "low" by character count.
+
+    Kept for record builders that are handed no quality. New code should call
+    content_policy.shape_decision, which reads the body instead of its size.
+    """
     return "low" if content_chars < min_quality_chars else "ok"
 
 

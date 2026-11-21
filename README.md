@@ -51,8 +51,8 @@ Beyond static news websites, Horus ingests related public discourse from social 
 
 ### 5. Resilient Concurrency and Quality Control
 * Adaptive Domain Semaphores: Throttles requests to fragile self-hosted regional servers (such as local WordPress VPS sites) while allowing high-throughput enterprise CDNs to operate at full concurrency.
-* Quality Tagging: Measures extracted character volume against empirical thresholds (`MIN_QUALITY_CHARS = 1000`), tagging low-volume fragments as `quality="low"` for targeted reharvesting via `scripts/reharvest_low_quality.py`.
-* Crash-Resilient SQLite WAL Frontier: Tracks pending, in-progress, completed, and failed URLs in dedicated SQLite databases with 60-second busy timeouts and batch commit buffering.
+* Shape-Based Quality Tagging: Classifies each extracted body as an article, a reader envelope, a chrome-only page, a CDN error page, an ad-interleaved body, or a photo caption, and tags `quality` from that shape instead of its length. Rejected shapes (envelope, chrome, error page) never reach a record; they land on the frontier as `Content shape rejected` and are marked terminal.
+* Crash-Resilient SQLite WAL Frontier: Tracks pending, in-progress, completed, and failed URLs in dedicated SQLite databases with 60-second busy timeouts and batch commit buffering. Terminal failures (HTTP 404, rejected shape) are written once with `retry_count = 3` and are not handed out again.
 
 ### 6. Downstream Analytical Export
 Convert raw line-delimited JSONL feeds into optimized analytical storage formats:

@@ -26,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 from backends.curl_impersonate import CurlImpersonateBackend
 from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.cleaner import clean_news_text
+from processors.content_policy import MIN_BODY_CHARS, warn_deprecated_quality_threshold
 from processors.crawl_frontier import CrawlFrontier
 from processors.cli_support import configure_proxy
 from processors.fetch_pipeline import fetch_article
@@ -203,9 +204,6 @@ def discover_topic_articles(
     return total_discovered
 
 
-TOPIC_MIN_CONTENT_LENGTH = 120
-
-
 async def _async_crawl_worker_loop(
     worker_id: int,
     topic_id: str,
@@ -213,7 +211,6 @@ async def _async_crawl_worker_loop(
     db_path: str,
     concurrency: int = 25,
     limit_per_worker: int = 50000,
-    min_quality_chars: int = MIN_QUALITY_CHARS,
 ):
     """Event loop for one CPU core process, streaming requests via AsyncQueue (direct-first)."""
     curl_backend = CurlImpersonateBackend()
@@ -229,10 +226,9 @@ async def _async_crawl_worker_loop(
             curl_backend,
             channel,
             norm_url,
-            min_content_length=TOPIC_MIN_CONTENT_LENGTH,
+            min_content_length=MIN_BODY_CHARS,
             fallback_min_content_length=1,
             wp_api_base=wp_api_base_for(urlparse(norm_url).netloc.replace("www.", "")),
-            min_quality_chars=min_quality_chars,
         )
         if result.content is None:
             await sink.fail(norm_url, result.reason)
@@ -275,7 +271,6 @@ def _worker_process_entrypoint(
     db_path: str,
     concurrency: int = 25,
     limit_per_worker: int = 50000,
-    min_quality_chars: int = MIN_QUALITY_CHARS,
 ):
     """Top-level process entrypoint for multiprocessing spawn."""
     asyncio.run(
@@ -286,7 +281,6 @@ def _worker_process_entrypoint(
             db_path=db_path,
             concurrency=concurrency,
             limit_per_worker=limit_per_worker,
-            min_quality_chars=min_quality_chars,
         )
     )
 
@@ -310,7 +304,8 @@ def harvest_topic(
     topic_id = cfg.topic.id
     output_file = output_override or str(cfg.get_output_path())
     db_path = f"data/state/crawl_{topic_id}_frontier.db"
-    min_quality_chars = cfg.output.min_quality_chars if cfg.output else MIN_QUALITY_CHARS
+    if cfg.output and cfg.output.min_quality_chars != MIN_QUALITY_CHARS:
+        warn_deprecated_quality_threshold(cfg.output.min_quality_chars, "topic_config.output")
 
     frontier = CrawlFrontier(db_path=db_path)
 
@@ -357,7 +352,6 @@ def harvest_topic(
                 db_path=db_path,
                 concurrency=concurrency,
                 limit_per_worker=limit,
-                min_quality_chars=min_quality_chars,
             )
         )
     else:
@@ -369,7 +363,7 @@ def harvest_topic(
             part_files.append(p_file)
             p = Process(
                 target=_worker_process_entrypoint,
-                args=(i, topic_id, str(p_file), db_path, concurrency, limit_per_core, min_quality_chars),
+                args=(i, topic_id, str(p_file), db_path, concurrency, limit_per_core),
             )
             processes.append(p)
             p.start()

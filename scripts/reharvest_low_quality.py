@@ -9,6 +9,11 @@ through the normal ladder, and writes the improved records to a side file.
     python scripts/reharvest_low_quality.py --path data/raw/news --domain detik.com --merge
 
 Nothing is rewritten until --merge is passed, and --merge keeps a .bak first.
+
+WARNING: --merge keeps the longest body per URL, and longer is not better.
+A reader envelope or a CloudFront error page is often longer than the article it
+replaces, so the dedupe can keep the wrong record. Run --dry-run first, and only
+pass --merge for a file you can restore from its .bak.
 """
 
 from __future__ import annotations
@@ -106,7 +111,6 @@ async def reharvest(
     targets: List[Dict[str, Any]],
     concurrency: int = 8,
     min_content_length: int = 120,
-    min_chars: int = MIN_QUALITY_CHARS,
 ) -> List[Dict[str, Any]]:
     """Fetches every target again and returns the records that actually improved."""
     curl_backend = CurlImpersonateBackend()
@@ -127,7 +131,6 @@ async def reharvest(
                     min_content_length=min_content_length,
                     fallback_min_content_length=1,
                     wp_api_base=wp_api_base_for(urlparse(url).netloc.replace("www.", "")),
-                    min_quality_chars=min_chars,
                 )
             except Exception as exc:
                 print(f"  ! {url}: {exc}", file=sys.stderr)
@@ -194,7 +197,7 @@ def main() -> int:
         return 0
 
     improved = asyncio.run(
-        reharvest(targets, concurrency=args.concurrency, min_chars=args.min_chars)
+        reharvest(targets, concurrency=args.concurrency)
     )
     print(f"improved {len(improved)} of {len(targets)}")
 

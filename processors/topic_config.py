@@ -63,7 +63,11 @@ class OutputConfig(BaseModel):
     min_quality_chars: int = Field(
         default=1000,
         ge=0,
-        description="Bodies below this character count are kept but tagged quality='low'",
+        description=(
+            "Deprecated and ignored: quality now comes from the body shape. "
+            "The only length gate is MIN_BODY_CHARS, which decides whether a "
+            "body is an article page at all."
+        ),
     )
 
 

@@ -29,7 +29,7 @@ from backends.curl_impersonate import CurlImpersonateBackend
 from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.ad_filter import is_ad_domain
 from processors.cleaner import normalize_article, normalize_timestamp
-from processors.content_policy import REJECT, shape_decision
+from processors.content_policy import MIN_BODY_CHARS, REJECT, shape_decision
 from processors.crawl_frontier import (
     CrawlFrontier,
     DEFAULT_FRONTIER_DB,
@@ -896,7 +896,7 @@ async def _async_backfill_worker_loop(
     frontier_db: str,
     concurrency: int = 30,
     limit_per_worker: int = 50000,
-    min_content_length: int = 150,
+    min_content_length: int = MIN_BODY_CHARS,
     portal_filter: Optional[str] = None,
 ):
     """Event loop for one CPU core backfill process, streaming requests via AsyncQueue (direct-first)."""
@@ -935,7 +935,7 @@ def _backfill_worker_process_entrypoint(
     frontier_db: str,
     concurrency: int = 30,
     limit_per_worker: int = 50000,
-    min_content_length: int = 150,
+    min_content_length: int = MIN_BODY_CHARS,
     portal_filter: Optional[str] = None,
 ):
     """Top-level process entrypoint for backfill multiprocessing spawn on Windows."""
@@ -963,7 +963,7 @@ def run_sitemap_backfill(
     output_file: str = "data/raw/news/football.jsonl",
     max_articles: int = 100,
     max_workers: int = 5,
-    min_content_length: int = 150,
+    min_content_length: int = MIN_BODY_CHARS,
     frontier_db: str = DEFAULT_FRONTIER_DB,
     cores: int = 2,
 ) -> Dict[str, Any]:
