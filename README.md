@@ -173,9 +173,12 @@ horus-news-harvester/
 │   ├── curl_impersonate.py      Chrome 124 TLS JA4 impersonation with HTTP/2 keep-alive
 │   ├── firefox_cookies.py       Cross-platform Firefox browser profile cookie extractor
 │   ├── headless_browser.py      Isolated zero-temp Chromium automation gateway
+│   ├── jina_reader.py           Zero-config Markdown extraction through r.jina.ai
+│   ├── rss_parser.py            RSS feed parser backend for news channels
 │   ├── twitter_graphql.py       Authenticated Twitter Web GraphQL client
 │   └── wordpress_rest.py        Native WordPress REST API post content reader
 ├── channels/
+│   ├── base.py                  Channel contract and backend routing semantics
 │   ├── innertube.py             InnerTube client transport and request signing
 │   ├── portal_news.py           Web news parser and Inertia.js fast-path unpacker
 │   ├── social_twitter.py        Twitter timeline and search channel adapter
@@ -189,7 +192,10 @@ horus-news-harvester/
 │   ├── raw/                     Standardized line-delimited JSONL feeds
 │   └── state/                   SQLite WAL crawl frontiers and tracking cursors
 ├── processors/
+│   ├── ad_filter.py             Ad and tracker domain filter for news portals
+│   ├── backup.py                Cold storage backup and cloud archive sync
 │   ├── cleaner.py               Zero-width stripper, timestamp normalizer, and deduplicator
+│   ├── cli_support.py           Shared CLI proxy bootstrap helpers
 │   ├── crawl_frontier.py        Resumable SQLite WAL queue with in-memory commit buffer
 │   ├── dapt.py                  NLP pretraining corpus formatter and text sanitizer
 │   ├── exporter.py              Analytical streaming exporter for SQLite, Parquet, and DuckDB
@@ -199,22 +205,27 @@ horus-news-harvester/
 │   ├── metrics.py               Multilingual counter parser for view, like, and reply metrics
 │   ├── portal_catalog.py        Domain preset resolver and auto-routing engine
 │   ├── record_writer.py         Canonical JSONL record sink with quality thresholding
+│   ├── session_store.py         Per-domain cookie session storage
 │   ├── sqlite_util.py           Shared SQLite WAL connection utilities
 │   ├── topic_config.py          Pydantic v2 declarative topic validation schema
 │   ├── tweet_normalizer.py      Twitter payload mapping to canonical harvest records
 │   ├── worker_loop.py           Multi-core async queue dispatch loop with domain semaphores
 │   └── youtube_normalizer.py    YouTube payload mapping to video and comment records
 ├── scripts/
+│   ├── bench_social.py          Throughput benchmark for the YouTube harvest path
+│   ├── bench_videos.py          Video-level concurrency benchmark for the YouTube harvester
 │   ├── discover_catalog_portals.py Catalog endpoint discovery and health auditor
 │   ├── fingerprint_portals.py   Fingerprint generator for Indonesian media outlets
+│   ├── probe_extraction.py      Live extraction probe for one domain's recent URLs
 │   ├── reharvest_low_quality.py Targeted reharvesting engine for truncated articles
 │   ├── report_yield.py          Harvest yield and content length analytical reporter
 │   ├── sitemap_backfill.py      Multi-process historical sitemap and date archive harvester
 │   ├── social_harvester.py      Social harvesting orchestrator for YouTube and Twitter
 │   └── topic_harvester.py       Topic-agnostic 2-core and 4-core multi-process harvester
-├── tests/                       Comprehensive test suite (272 unit and integration tests)
+├── tests/                       Comprehensive test suite (274 unit and integration tests)
 ├── cli.py                       Unified command line interface
 ├── CLAUDE.md                    Developer guidance and architectural invariants
+├── doctor.py                    Dependency and channel health diagnostics
 ├── logo.png                     Horus News Harvester visual emblem
 └── pyproject.toml               PEP 621 package specification and entrypoint definitions
 ```
@@ -227,7 +238,7 @@ Execute the complete test suite:
 python -m unittest discover tests
 ```
 
-All 272 unit and integration tests must pass before committing changes.
+All 274 unit and integration tests must pass before committing changes.
 
 ## License
 
