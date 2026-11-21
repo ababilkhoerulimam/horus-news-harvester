@@ -64,6 +64,19 @@ class NormalizeRecordTests(unittest.TestCase):
 
         self.assertEqual(set(updated), set(self.record))
 
+    def test_missing_quality_and_content_chars_are_added(self):
+        record = {k: v for k, v in self.record.items() if k not in ("quality", "content_chars")}
+
+        updated, _ = normalize_record(record)
+
+        self.assertEqual(set(updated), set(self.record))
+
+    def test_nested_entities_need_a_second_run(self):
+        once = normalize_content("Gol &amp;nbsp; kartu")
+
+        self.assertIn("&nbsp;", once)
+        self.assertNotIn("&nbsp;", normalize_content(once))
+
     def test_url_and_backend_are_untouched(self):
         updated, _ = normalize_record(self.record)
 
