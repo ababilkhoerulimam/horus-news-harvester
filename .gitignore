@@ -226,3 +226,6 @@ config/proxies.txt
 data/state/
 data/raw/
 .hermes/
+
+# Local audit notes and read-only measurement scripts
+_audit/
