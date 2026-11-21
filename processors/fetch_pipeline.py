@@ -10,8 +10,9 @@ from backends.wordpress_rest import fetch_post_body
 from channels.portal_news import extract_clean_article_text, is_cloudflare_challenge
 from processors import session_store
 from processors.cleaner import normalize_article
+from processors.content_policy import REJECT, shape_decision
 from processors.http_client import default_http_client
-from processors.record_writer import MIN_QUALITY_CHARS, quality_of
+from processors.record_writer import MIN_QUALITY_CHARS
 
 RETRY_STATUSES = (0, 202, 403, 429, 503)
 
@@ -51,13 +52,14 @@ def _is_blocked(status: int, html: Optional[str]) -> bool:
     return status in RETRY_STATUSES or not html or is_cloudflare_challenge(status, html)
 REASON_NOT_FOUND = "HTTP 404 Not Found"
 REASON_TOO_SHORT = "Content length below minimum threshold"
+REASON_REJECTED = "Content shape rejected"
 
 
 class FetchResult(NamedTuple):
     """Outcome of one article extraction attempt.
 
-    quality/content_chars are carried on the success path so the caller can tag
-    the record without measuring the body a second time.
+    quality/content_chars/label are carried on the success path so the caller
+    can tag the record without measuring the body a second time.
     """
 
     content: Optional[str]
@@ -67,6 +69,7 @@ class FetchResult(NamedTuple):
     published_date: str = ""
     content_chars: int = 0
     quality: str = "ok"
+    label: str = ""
 
 
 def _success(
@@ -74,19 +77,19 @@ def _success(
     backend: str,
     title: str = "",
     published_date: str = "",
-    min_quality_chars: int = MIN_QUALITY_CHARS,
+    url: str = "",
 ) -> FetchResult:
-    """Builds a success result, labelling short bodies instead of dropping them."""
-    chars = len(content)
-    return FetchResult(
-        content,
-        backend,
-        None,
-        title,
-        published_date,
-        chars,
-        quality_of(chars, min_quality_chars),
-    )
+    """Builds a result carrying the body's shape label and quality.
+
+    A rejected shape returns no content. An error page or a reader envelope is
+    not an article, and writing one into a record is what put 7.344 envelope
+    bodies into the corpus; the caller keeps the reason so the frontier row
+    says why the URL produced nothing.
+    """
+    label, quality, _ = shape_decision(content, url)
+    if quality == REJECT:
+        return FetchResult(None, backend, REASON_REJECTED, quality=REJECT, label=label)
+    return FetchResult(content, backend, None, title, published_date, len(content), quality, label)
 
 
 async def fetch_article(
@@ -108,26 +111,32 @@ async def fetch_article(
     A 404 short-circuits without proxy retry because the page is gone. Any other
     blocked or challenged response is retried once through the rotating proxy
     before the channel extractor is consulted.
+
+    `min_quality_chars` is still accepted for callers that pass it and no longer
+    has any effect: quality comes from the body's shape, not its length.
     """
     if fallback_min_content_length is None:
         fallback_min_content_length = min_content_length
+
+    # The last body the shape rules rejected. Kept so a URL that only ever
+    # produced an error page reports that instead of "too short".
+    rejected: Optional[FetchResult] = None
 
     if wp_api_base:
         post = await fetch_post_body(session, curl_backend, wp_api_base, url)
         if post:
             content = normalize_article(post.get("content") or "")
             if len(content) >= min_content_length:
-                return _success(
-                    content,
-                    "wordpress_rest",
-                    post.get("title") or "",
-                    min_quality_chars=min_quality_chars,
-                )
+                result = _success(content, "wordpress_rest", post.get("title") or "", url=url)
+                if result.content is not None:
+                    return result
+                rejected = result
 
     domain = _domain_of(url)
 
     def _accept(status: int, html: Optional[str], backend: str) -> Optional[FetchResult]:
         """Returns a result when this response is good enough to keep."""
+        nonlocal rejected
         if status != 200 or not html or is_cloudflare_challenge(status, html):
             return None
         # Normalize before the gate: a body that is only a dateline and a
@@ -135,7 +144,13 @@ async def fetch_article(
         content = normalize_article(extract_clean_article_text(html, domain))
         if len(content) < min_content_length:
             return None
-        return _success(content, backend, min_quality_chars=min_quality_chars)
+        result = _success(content, backend, url=url)
+        if result.content is None:
+            # A rejected shape means this rung produced no article, so the next
+            # rung still gets a turn: an envelope comes from the fetch, not the URL.
+            rejected = result
+            return None
+        return result
 
     if session is not None:
         status, html = await curl_backend.fetch_async(session, url, proxy=None)
@@ -172,11 +187,14 @@ async def fetch_article(
     if res.get("status") == "success":
         content = normalize_article(res.get("content") or "")
         if len(content) >= fallback_min_content_length:
-            return _success(
+            result = _success(
                 content,
                 res.get("backend", "direct_http"),
                 res.get("title") or "",
                 res.get("published_date") or "",
-                min_quality_chars,
+                url,
             )
-    return FetchResult(None, None, REASON_TOO_SHORT)
+            if result.content is not None:
+                return result
+            rejected = result
+    return rejected or FetchResult(None, None, REASON_TOO_SHORT)

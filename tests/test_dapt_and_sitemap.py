@@ -409,6 +409,32 @@ class ChannelExtractRecordTests(unittest.TestCase):
         self.assertIsNone(record)
         self.assertEqual(error, "blocked")
 
+    def test_channel_extract_record_rejects_a_reader_envelope(self):
+        from processors.fetch_pipeline import REASON_REJECTED
+
+        record, error = self._run({
+            "status": "success",
+            "content": "Title: X\nURL Source: https://a\n\nMarkdown Content:\n\n" + "isi " * 80,
+            "backend": "direct_http",
+        }, min_content_length=1)
+
+        self.assertIsNone(record)
+        self.assertEqual(error, REASON_REJECTED)
+
+    def test_channel_extract_record_passes_quality_explicitly(self):
+        # A caption-shaped body is "low" from its shape, not from being short:
+        # build_news_record would call it "ok" because 250 characters is not
+        # under its length threshold, so the explicit quality is the only thing
+        # that carries the decision.
+        record, error = self._run({
+            "status": "success",
+            "content": "Pemain Persib berlatih di stadion jelang laga. (BP/Antara)",
+            "backend": "direct_http",
+        }, min_content_length=1)
+
+        self.assertIsNone(error)
+        self.assertEqual(record["quality"], "low")
+
 
 class SitemapPreferenceTests(unittest.TestCase):
     """WordPress's own sitemap must beat a stale root /sitemap.xml.

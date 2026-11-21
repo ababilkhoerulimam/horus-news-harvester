@@ -29,8 +29,9 @@ from backends.curl_impersonate import CurlImpersonateBackend
 from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.ad_filter import is_ad_domain
 from processors.cleaner import normalize_article, normalize_timestamp
+from processors.content_policy import REJECT, shape_decision
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB, interleave_by_portal
-from processors.fetch_pipeline import REASON_TOO_SHORT, fetch_article
+from processors.fetch_pipeline import REASON_REJECTED, REASON_TOO_SHORT, fetch_article
 from processors.portal_catalog import wp_api_base_for
 from processors.http_client import default_http_client
 from processors.record_writer import build_news_record
@@ -824,8 +825,8 @@ def _channel_extract_record(
     """Extracts one candidate through the channel only, for the thread fallback.
 
     Returns `(record, None)` when the page passed the gate, or `(None, reason)`
-    when it did not, so the caller can tell a failed fetch from a short page
-    without inspecting the response a second time.
+    when it did not, so the caller can tell a failed fetch from a short page or
+    a rejected shape without inspecting the response a second time.
     """
     res = channel.extract(cand["url"], config={"disable_headless": True})
     if res.get("status") != "success":
@@ -833,6 +834,9 @@ def _channel_extract_record(
     content = normalize_article(res.get("content") or "")
     if len(content) < min_content_length:
         return None, REASON_TOO_SHORT
+    _, quality, _ = shape_decision(content, cand["url"])
+    if quality == REJECT:
+        return None, REASON_REJECTED
     record = build_news_record(
         url=cand["url"],
         title=cand.get("title") or res.get("title"),
@@ -840,6 +844,7 @@ def _channel_extract_record(
         archive_date=cand.get("archive_date", ""),
         content=content,
         backend=res.get("backend", "direct_http"),
+        quality=quality,
     )
     return record, None
 

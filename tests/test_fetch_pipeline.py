@@ -2,10 +2,12 @@
 
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+from processors.content_shape import ARTICLE, CHROME_ONLY, ERROR_PAGE, READER_ENVELOPE
 from processors.fetch_pipeline import (
     REASON_NOT_FOUND,
+    REASON_REJECTED,
     REASON_TOO_SHORT,
     domain_session,
     fetch_article,
@@ -49,7 +51,8 @@ class FakeChannel:
 class TestFetchArticleLadder(unittest.TestCase):
     """Verifies the direct, proxy, and channel fallback ordering."""
 
-    def _run(self, curl, channel, min_length=150, fallback_min_length=None, min_quality_chars=MIN_QUALITY_CHARS):
+    def _run(self, curl, channel, min_length=150, fallback_min_length=None,
+             min_quality_chars=MIN_QUALITY_CHARS, wp_api_base=None):
         return asyncio.run(
             fetch_article(
                 session=object(),
@@ -59,6 +62,7 @@ class TestFetchArticleLadder(unittest.TestCase):
                 min_content_length=min_length,
                 fallback_min_content_length=fallback_min_length,
                 min_quality_chars=min_quality_chars,
+                wp_api_base=wp_api_base,
             )
         )
 
@@ -154,25 +158,66 @@ class TestFetchArticleLadder(unittest.TestCase):
         self.assertTrue(res.content.startswith('Laga berjalan'))
         self.assertNotIn('KOMPAS.com', res.content)
 
-    def test_success_carries_body_length_and_quality(self):
+    def test_success_carries_body_length_and_shape_label(self):
         curl = FakeCurlBackend([(200, ARTICLE_HTML)])
         channel = FakeChannel({'status': 'success', 'content': 'x' * 200})
         res = self._run(curl, channel)
         self.assertEqual(res.content_chars, len(res.content))
-        self.assertEqual(res.quality, quality_of(len(res.content)))
+        self.assertEqual(res.quality, "ok")
+        self.assertEqual(res.label, ARTICLE)
 
-    def test_short_fallback_body_is_tagged_low_not_dropped(self):
+    def test_short_clean_body_is_tagged_ok_not_low(self):
+        # "low" now means a photo caption or an ad-interleaved body. A short
+        # clean paragraph is a fragment, and length no longer decides its label.
         curl = FakeCurlBackend([(200, '<html><body><p>pendek</p></body></html>')])
         channel = FakeChannel({'status': 'success', 'content': 'x' * 20})
         res = self._run(curl, channel, min_length=150, fallback_min_length=1)
-        self.assertEqual(res.quality, "low")
+        self.assertEqual(res.quality, "ok")
         self.assertEqual(res.content_chars, 20)
 
-    def test_quality_threshold_can_be_overridden(self):
+    def test_min_quality_chars_no_longer_changes_the_label(self):
         curl = FakeCurlBackend([(200, ARTICLE_HTML)])
         channel = FakeChannel({'status': 'success', 'content': 'x' * 200})
         res = self._run(curl, channel, min_quality_chars=100000)
-        self.assertEqual(res.quality, "low")
+        self.assertEqual(res.quality, "ok")
+
+    def test_reader_envelope_is_not_returned_as_content(self):
+        envelope = (
+            "Title: Hasil PSS vs Borneo\nURL Source: https://bola.example.com/x\n\n"
+            "Markdown Content:\n\n" + "Isi berita yang cukup panjang. " * 12
+        )
+        curl = FakeCurlBackend([(200, '<html><body><p>pendek</p></body></html>')])
+        channel = FakeChannel({'status': 'success', 'content': envelope})
+        res = self._run(curl, channel, min_length=150, fallback_min_length=1)
+        self.assertIsNone(res.content)
+        self.assertEqual(res.reason, REASON_REJECTED)
+        self.assertEqual(res.label, READER_ENVELOPE)
+
+    def test_chrome_only_is_rejected_at_the_channel_rung(self):
+        curl = FakeCurlBackend([(200, '<html><body><p>pendek</p></body></html>')])
+        channel = FakeChannel({'status': 'success', 'content': 'Detail Berita Link Copied! ' * 12})
+        res = self._run(curl, channel, min_length=150, fallback_min_length=1)
+        self.assertIsNone(res.content)
+        self.assertEqual(res.reason, REASON_REJECTED)
+        self.assertEqual(res.label, CHROME_ONLY)
+
+    def test_rejected_body_reports_a_shape_reason(self):
+        curl = FakeCurlBackend([(200, '<html><body><p>pendek</p></body></html>')])
+        channel = FakeChannel({'status': 'success', 'content': 'The request could not be satisfied. ' * 5})
+        res = self._run(curl, channel, min_length=150, fallback_min_length=1)
+        self.assertIsNone(res.content)
+        self.assertEqual(res.reason, REASON_REJECTED)
+        self.assertEqual(res.label, ERROR_PAGE)
+
+    def test_wp_rest_body_is_classified_too(self):
+        curl = FakeCurlBackend([(200, '<html><body><p>pendek</p></body></html>')])
+        channel = FakeChannel({'status': 'failed', 'content': ''})
+        post = {'content': 'URL Source: https://a\nMarkdown Content:\n' + 'isi ' * 100, 'title': 'T'}
+        with patch('processors.fetch_pipeline.fetch_post_body', new=AsyncMock(return_value=post)):
+            res = self._run(curl, channel, wp_api_base='https://a.example.com/wp-json')
+        self.assertIsNone(res.content)
+        self.assertEqual(res.label, READER_ENVELOPE)
+        self.assertEqual(channel.calls, 1)
 
 
 class TestRecordShapes(unittest.TestCase):
@@ -200,7 +245,9 @@ class TestRecordShapes(unittest.TestCase):
         )
         self.assertEqual(rec["topic"], "sports")
 
-    def test_news_record_tags_short_body_low(self):
+    def test_news_record_without_quality_uses_the_deprecated_length_rule(self):
+        # build_news_record is unchanged on purpose; this locks the fallback for
+        # callers that pass no quality, not the behaviour of the fetch pipeline.
         rec = build_news_record("https://a.example.com/x", "T", "", "", "x" * 405, "direct_http")
         self.assertEqual(rec["quality"], "low")
         self.assertEqual(rec["content_chars"], 405)
@@ -217,7 +264,7 @@ class TestRecordShapes(unittest.TestCase):
         )
         self.assertEqual(rec["quality"], "low")
 
-    def test_quality_threshold_is_inclusive_of_itself(self):
+    def test_quality_of_is_retained_for_legacy_callers(self):
         self.assertEqual(quality_of(MIN_QUALITY_CHARS), "ok")
         self.assertEqual(quality_of(MIN_QUALITY_CHARS - 1), "low")
 

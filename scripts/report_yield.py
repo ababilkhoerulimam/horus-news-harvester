@@ -70,15 +70,21 @@ def news_report(raw_dir: Path) -> Dict[str, Any]:
             continue
         entry = domains.setdefault(
             domain,
-            {"total": 0, "fast": 0, "slow": 0, "low": 0, "unlabelled": 0, "backends": {}, "lengths": []},
+            {"total": 0, "fast": 0, "slow": 0, "low": 0, "reject": 0,
+             "unlabelled": 0, "backends": {}, "lengths": []},
         )
         backend = record.get("backend") or "none"
         entry["total"] += 1
         # Records written before quality tagging existed carry no label; counting
         # them as "ok" would hide the backlog, so they get their own bucket.
+        # "low" changed meaning on 2026-11-21: it now marks a caption or an
+        # ad-interleaved body, not a body under 1.000 characters. Compare the
+        # three columns together, never low% alone across that date.
         quality = record.get("quality")
         if quality is None:
             entry["unlabelled"] += 1
+        elif quality == "reject":
+            entry["reject"] += 1
         elif quality == "low":
             entry["low"] += 1
         entry["backends"][backend] = entry["backends"].get(backend, 0) + 1
@@ -99,6 +105,8 @@ def news_report(raw_dir: Path) -> Dict[str, Any]:
                 "slow_pct": round(entry["slow"] * 100.0 / entry["total"], 1) if entry["total"] else 0.0,
                 "low": entry["low"],
                 "low_pct": round(entry["low"] * 100.0 / entry["total"], 1) if entry["total"] else 0.0,
+                "reject": entry["reject"],
+                "reject_pct": round(entry["reject"] * 100.0 / entry["total"], 1) if entry["total"] else 0.0,
                 "unlabelled": entry["unlabelled"],
                 "unlabelled_pct": round(entry["unlabelled"] * 100.0 / entry["total"], 1) if entry["total"] else 0.0,
                 "backends": entry["backends"],
@@ -159,12 +167,12 @@ def _print_news(report: Dict[str, Any], top: int, min_records: int) -> None:
     total = report["records"] or 1
     print(f"news: {report['records']} records, {report['slow']} slow ({report['slow'] * 100 // total}%)")
     print()
-    print(f"{'domain':<28}{'total':>8}{'slow':>8}{'slow%':>7}{'low%':>7}{'unlab%':>8}{'med chars':>11}{'p10':>8}")
-    print("-" * 85)
+    print(f"{'domain':<28}{'total':>8}{'slow':>8}{'slow%':>7}{'low%':>7}{'rej%':>7}{'unlab%':>8}{'med chars':>11}{'p10':>8}")
+    print("-" * 92)
     for row in rows:
         print(
             f"{row['domain']:<28}{row['total']:>8}{row['slow']:>8}"
-            f"{row['slow_pct']:>6}%{row['low_pct']:>6}%{row['unlabelled_pct']:>7}%"
+            f"{row['slow_pct']:>6}%{row['low_pct']:>6}%{row['reject_pct']:>6}%{row['unlabelled_pct']:>7}%"
             f"{row['chars_median']:>11}{row['chars_p10']:>8}"
         )
 
