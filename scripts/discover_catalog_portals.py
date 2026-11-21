@@ -150,6 +150,9 @@ def run_catalog_discovery(
 
         # 4. Fetch sitemaps
         for sm in sitemaps_to_try:
+            # Each candidate is a full recursive walk; stop once the budget is met.
+            if len(discovered_articles) >= max_urls_per_portal:
+                break
             try:
                 sm_items = fetch_sitemap_urls(
                     sm,
