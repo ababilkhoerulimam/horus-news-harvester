@@ -22,9 +22,9 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from processors.cleaner import clean_news_text
 

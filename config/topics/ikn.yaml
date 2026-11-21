@@ -1,7 +1,5 @@
-# ==============================================================================
 # Topic Configuration: IKN (Ibu Kota Nusantara) Intelligence
 # National News Intelligence Harvester (NNIH)
-# ==============================================================================
 
 topic:
   id: "ikn"
@@ -10,9 +8,7 @@ topic:
   default_output: "data/raw/news/ikn.jsonl"
   default_dapt_output: "data/processed/nusabert_ikn_dapt.txt"
 
-# ------------------------------------------------------------------------------
 # Keywords Taxonomy
-# ------------------------------------------------------------------------------
 keywords:
   # Pembangunan & Kawasan Inti
   infrastructure:
@@ -71,10 +67,8 @@ keywords:
     - "samarinda"
     - "kalimantan timur"
 
-# ------------------------------------------------------------------------------
 # Target Portals Configuration
 # Combines national wire with Kalimantan regional network
-# ------------------------------------------------------------------------------
 portals:
   presets:
     - "national_wire"

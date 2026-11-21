@@ -9,9 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from processors.topic_config import (
-    SocialConfig,
     TopicConfig,
-    TwitterSocialConfig,
     YouTubeSocialConfig,
 )
 from scripts import social_harvester

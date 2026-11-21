@@ -28,9 +28,7 @@ class TestSixArchitecturePatches(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    # =========================================================================
     # Patch 1 & 5: Deduplication & Fast Set Lookup
-    # =========================================================================
 
 
     def test_deduplicate_jsonl_file_in_place(self):
@@ -54,9 +52,7 @@ class TestSixArchitecturePatches(unittest.TestCase):
         urls = [item["url"] for item in lines]
         self.assertEqual(urls, ["https://example.com/a", "https://example.com/b", "https://example.com/c"])
 
-    # =========================================================================
     # Patch 2: Multi-Platform & Env Fallback Twitter Session
-    # =========================================================================
 
     def test_twitter_env_variables_priority(self):
         """Verifies TWITTER_AUTH_TOKEN & TWITTER_CT0 take precedence over browser search."""
@@ -77,9 +73,7 @@ class TestSixArchitecturePatches(unittest.TestCase):
             profiles = find_firefox_profiles()
             self.assertTrue(any(p.resolve() == mock_profile.resolve() for p in profiles))
 
-    # =========================================================================
     # Patch 3: Date Normalizer to ISO-8601 UTC
-    # =========================================================================
 
     def test_normalize_timestamp_indonesian_relative(self):
         """Verifies Indonesian relative time expressions resolve correctly to ISO-8601 UTC."""
@@ -113,9 +107,7 @@ class TestSixArchitecturePatches(unittest.TestCase):
         res_wib = normalize_timestamp(wib_str)
         self.assertEqual(res_wib, "2026-10-18T07:30:00Z")
 
-    # =========================================================================
     # Patch 4: Dynamic Continuation Pagination Komentar YouTube
-    # =========================================================================
 
     def test_youtube_replies_dynamic_max_pages_scaling(self):
         """Verifies YouTube _fetch_innertube_replies dynamically computes max_pages from max_replies."""
@@ -177,9 +169,7 @@ class TestSixArchitecturePatches(unittest.TestCase):
             self.assertEqual(replies[1]["id"], "rep_2")
             self.assertEqual(mock_fetch.call_count, 2)
 
-    # =========================================================================
     # Patch 6: Cold Storage Backup & Archive Sync
-    # =========================================================================
 
     def test_create_backup_archive_and_integrity(self):
         """Verifies tar.gz archive creation and contents integrity."""

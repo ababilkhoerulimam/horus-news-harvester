@@ -321,7 +321,6 @@ def main():
             print("\nBreakdown by Portal:")
             for p, p_data in summary.get("portals", {}).items():
                 print(f"  * {p}: {p_data.get('total', 0):,} total ({p_data.get('completed', 0):,} done, {p_data.get('pending', 0):,} pending, {p_data.get('failed', 0):,} failed)")
-            print("========================================================\n")
         else:
             from scripts.sitemap_backfill import run_sitemap_backfill
             mode_desc = f"mode: {args.mode}"

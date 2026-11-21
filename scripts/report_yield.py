@@ -17,7 +17,7 @@ import json
 import statistics
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

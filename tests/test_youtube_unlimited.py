@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pydantic
 
 from channels.social_youtube import YouTubeChannel
-from processors.topic_config import SocialConfig, TopicConfig, YouTubeSocialConfig
+from processors.topic_config import TopicConfig, YouTubeSocialConfig
 from scripts import social_harvester
 
 

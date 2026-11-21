@@ -1,7 +1,5 @@
-# ==============================================================================
 # Topic Configuration: Indonesian Sports Intelligence (NNIH)
 # Unifies Football, Basketball, Badminton, and Volleyball into declarative NNIH
-# ==============================================================================
 
 topic:
   id: "sports"

@@ -1,8 +1,6 @@
-# ==============================================================================
 # Topic Configuration: Indonesian Forest & Peatland Fires (Karhutla)
 # National News Intelligence Harvester (NNIH)
 # Optimized for Domain-Adaptive Pre-Training (DAPT) and Corporate SNA / Attribution
-# ==============================================================================
 
 topic:
   id: "karhutla"
@@ -11,9 +9,7 @@ topic:
   default_output: "data/raw/news/karhutla.jsonl"
   default_dapt_output: "data/processed/nusabert_karhutla_dapt.txt"
 
-# ------------------------------------------------------------------------------
 # Exhaustive Multi-Tier Taxonomy for Precision Filtering
-# ------------------------------------------------------------------------------
 keywords:
   # 1. Peristiwa Fisik, Titik Panas, Api & Kualitas Udara
   events_and_phenomena:
@@ -237,9 +233,7 @@ keywords:
       - "paser"
       - "penajam paser utara"
 
-# ------------------------------------------------------------------------------
 # Declarative Multi-Tier Portal Routing via NNIH Catalog Presets
-# ------------------------------------------------------------------------------
 portals:
   presets:
     # 1. 15 Media Nasional Arus Utama (Kebijakan Pusat, SiPongi KLHK, BNPB, BMKG)
@@ -251,9 +245,7 @@ portals:
   include: []
   exclude: []
 
-# ------------------------------------------------------------------------------
 # Export & Quality Threshold
-# ------------------------------------------------------------------------------
 output:
   format: "jsonl"
   destination_path: "data/raw/news/karhutla.jsonl"

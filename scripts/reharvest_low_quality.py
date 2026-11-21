@@ -31,7 +31,7 @@ from channels.portal_news import PortalNewsChannel
 from processors.cleaner import deduplicate_jsonl_file
 from processors.fetch_pipeline import fetch_article
 from processors.portal_catalog import wp_api_base_for
-from processors.record_writer import MIN_QUALITY_CHARS, quality_of
+from processors.record_writer import MIN_QUALITY_CHARS
 
 SIDE_SUFFIX = ".reharvest.jsonl"
 
