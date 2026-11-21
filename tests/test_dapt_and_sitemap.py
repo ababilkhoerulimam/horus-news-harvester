@@ -4,9 +4,11 @@ and NusaBERT DAPT corpus preparation.
 """
 
 import asyncio
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -488,6 +490,91 @@ class SitemapCandidateTests(unittest.TestCase):
         candidates = standard_sitemap_candidates("https://sport.example.com", "example.com")
 
         self.assertEqual(candidates[0], "https://sport.example.com/sitemap.xml")
+
+
+class CatalogDiscoveryTests(unittest.TestCase):
+    """run_catalog_discovery must not re-walk sitemaps after the budget is met.
+
+    Each candidate is a full recursive walk, so without the guard a portal that
+    already reached max_urls_per_portal keeps fetching the remaining candidates.
+    """
+
+    @staticmethod
+    def _articles(tag, count):
+        return [
+            {
+                "url": f"https://example.com/{tag}/{i}",
+                "title": "",
+                "published_date": "",
+                "archive_date": "",
+            }
+            for i in range(count)
+        ]
+
+    def _run(self, walk_side_effect, max_urls=5000):
+        from scripts.discover_catalog_portals import run_catalog_discovery
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "catalog.json"
+            catalog.write_text(
+                json.dumps({
+                    "portals": [{
+                        "domain": "example.com",
+                        "name": "Example",
+                        "sports_url": "https://sport.example.com",
+                        "has_sports_desk": False,
+                    }]
+                }),
+                encoding="utf-8",
+            )
+            fingerprints = Path(tmp) / "fingerprints.json"
+            fingerprints.write_text("[]", encoding="utf-8")
+
+            with patch("scripts.discover_catalog_portals.configure_proxy", return_value=(0, None)), \
+                    patch("scripts.discover_catalog_portals.fetch_sitemap_urls") as walk:
+                walk.side_effect = walk_side_effect
+                with redirect_stdout(io.StringIO()):
+                    result = run_catalog_discovery(
+                        catalog_file=str(catalog),
+                        fingerprints_file=str(fingerprints),
+                        frontier_db=str(Path(tmp) / "frontier.db"),
+                        max_urls_per_portal=max_urls,
+                    )
+
+        return result, walk.call_args_list
+
+    def _candidate_count(self):
+        from scripts.discover_catalog_portals import standard_sitemap_candidates
+
+        return len(set(standard_sitemap_candidates("https://sport.example.com", "example.com")))
+
+    def test_sitemap_walk_stops_once_the_budget_is_met(self):
+        budget = 5000
+        result, calls = self._run(
+            lambda sitemap, **kwargs: self._articles("full", budget), max_urls=budget
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["portal_stats"]["example"]["discovered"], budget)
+
+    def test_every_candidate_is_walked_when_the_budget_is_not_met(self):
+        _, calls = self._run(lambda sitemap, **kwargs: self._articles("few", 1))
+
+        self.assertEqual(len(calls), self._candidate_count())
+
+    def test_discovered_articles_are_queued_in_the_frontier(self):
+        counter = {"n": 0}
+
+        def walk(sitemap, **kwargs):
+            counter["n"] += 1
+            return self._articles(f"c{counter['n']}", 3)
+
+        result, _ = self._run(walk)
+        expected = self._candidate_count() * 3
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["total_discovered"], expected)
+        self.assertEqual(result["total_new_queued"], expected)
 
 
 if __name__ == "__main__":
