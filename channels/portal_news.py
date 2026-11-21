@@ -27,6 +27,22 @@ except ImportError:
     HAS_TRAFILATURA = False
 
 
+def _sink_read(sink, url: str) -> Tuple[Optional[int], Optional[str]]:
+    """Returns a captured (status, html), or (None, None) when there is no capture."""
+    if sink is None:
+        return None, None
+    cached = sink.read(url)
+    if cached is None:
+        return None, None
+    return cached
+
+
+def _sink_write(sink, url: str, status: int, html: Optional[str], backend: str) -> None:
+    """Records one response when a capture store is attached."""
+    if sink is not None:
+        sink.write(url, status, html, backend)
+
+
 _SINGLE_PAGE_PORTALS = {
     "detik.com": ("single=1", False),
     "sindonews.com": ("page=all", False),
@@ -373,12 +389,16 @@ class PortalNewsChannel(SportsChannel):
         """Extracts article content using ordered backend fallback with multi-page handling."""
         normalized_url = normalize_portal_url(url)
         backends_to_try = self.ordered_backends(config)
+        sink = config.get("html_sink") if config else None
 
         for backend in backends_to_try:
             if backend == "curl_impersonate" and self.curl.is_available():
                 try:
                     proxy = (config.get("proxy") if config else None) or default_http_client.get_active_proxy()
-                    status, html = self.curl.fetch(normalized_url, proxy=proxy)
+                    status, html = _sink_read(sink, normalized_url)
+                    if status is None:
+                        status, html = self.curl.fetch(normalized_url, proxy=proxy)
+                        _sink_write(sink, normalized_url, status, html, "curl_impersonate")
                     if status == 200 and html:
                         if not is_cloudflare_challenge(status, html):
                             clean_content = extract_clean_article_text(html, _domain_of(normalized_url))
@@ -416,8 +436,14 @@ class PortalNewsChannel(SportsChannel):
                             break
                         visited.add(current_url)
 
-                        status, body, _ = default_http_client.fetch(current_url, timeout=6.0, max_retries=1)
-                        html = body.decode("utf-8", errors="replace") if body else ""
+                        cached_status, cached_html = _sink_read(sink, current_url)
+                        if cached_status is None:
+                            status, body, _ = default_http_client.fetch(current_url, timeout=6.0, max_retries=1)
+                            html = body.decode("utf-8", errors="replace") if body else ""
+                            _sink_write(sink, current_url, status, html, "direct_http")
+                        else:
+                            status, html = cached_status, cached_html
+                            body = html.encode("utf-8") if html else b""
 
                         # Cloudflare / WAF challenge detection: escalate immediately to Headless Chromium if enabled
                         if is_cloudflare_challenge(status, html):

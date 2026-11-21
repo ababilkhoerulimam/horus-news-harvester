@@ -229,3 +229,6 @@ data/raw/
 
 # Local audit notes and read-only measurement scripts
 _audit/
+
+# Captured HTML for offline replay; hundreds of megabytes, never committed
+_replay/

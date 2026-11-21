@@ -101,6 +101,7 @@ async def fetch_article(
     fallback_min_content_length: Optional[int] = None,
     wp_api_base: Optional[str] = None,
     min_quality_chars: int = MIN_QUALITY_CHARS,
+    html_source=None,
 ) -> FetchResult:
     """Fetches and cleans one article, falling back to the channel extractor.
 
@@ -114,6 +115,11 @@ async def fetch_article(
 
     `min_quality_chars` is still accepted for callers that pass it and no longer
     has any effect: quality comes from the body's shape, not its length.
+
+    `html_source` is a capture store (duck-typed: read(url) -> (status, html) or
+    None, write(url, status, html, backend)). Production calls leave it unset,
+    so a harvest can never read a cache by accident; the probe script passes one
+    to record or replay responses.
     """
     if fallback_min_content_length is None:
         fallback_min_content_length = min_content_length
@@ -153,7 +159,19 @@ async def fetch_article(
         return result
 
     if session is not None:
-        status, html = await curl_backend.fetch_async(session, url, proxy=None)
+
+        async def _fetch(target_url: str, **kwargs):
+            """Reads one response through the store when replaying, else the network."""
+            if html_source is not None:
+                cached = html_source.read(target_url)
+                if cached is not None:
+                    return cached
+            status, html = await curl_backend.fetch_async(session, target_url, **kwargs)
+            if html_source is not None:
+                html_source.write(target_url, status, html, "curl_impersonate")
+            return status, html
+
+        status, html = await _fetch(url)
         if status == 404:
             return FetchResult(None, None, REASON_NOT_FOUND)
 
@@ -164,7 +182,7 @@ async def fetch_article(
         if _is_blocked(status, html):
             proxy = default_http_client.get_active_proxy()
             if proxy:
-                status, html = await curl_backend.fetch_async(session, url, proxy=proxy)
+                status, html = await _fetch(url, proxy=proxy)
                 accepted = _accept(status, html, "curl_impersonate")
                 if accepted is not None:
                     return accepted
@@ -176,14 +194,15 @@ async def fetch_article(
             stored = domain_session(domain)
             if stored:
                 cookies, user_agent = stored
-                status, html = await curl_backend.fetch_async(
-                    session, url, cookies=cookies, user_agent=user_agent
-                )
+                status, html = await _fetch(url, cookies=cookies, user_agent=user_agent)
                 accepted = _accept(status, html, "curl_session")
                 if accepted is not None:
                     return accepted
 
-    res = await asyncio.to_thread(channel.extract, url, {"disable_headless": True})
+    channel_config = {"disable_headless": True}
+    if html_source is not None:
+        channel_config["html_sink"] = html_source
+    res = await asyncio.to_thread(channel.extract, url, channel_config)
     if res.get("status") == "success":
         content = normalize_article(res.get("content") or "")
         if len(content) >= fallback_min_content_length:
