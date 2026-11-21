@@ -44,7 +44,6 @@ def _cfg(workers: int, videos: int, comments: Any, replies: Any, pacing_ms: int)
             "max_replies_per_comment": replies,
             "request_min_interval_ms": pacing_ms,
             "video_workers": workers,
-            "reply_workers": 2,
         }},
     })
 

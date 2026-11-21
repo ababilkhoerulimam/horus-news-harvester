@@ -11,7 +11,6 @@ script is usable before and after the transport and concurrency changes land.
 from __future__ import annotations
 
 import argparse
-import inspect
 import logging
 import sys
 import time
@@ -24,13 +23,6 @@ if str(REPO_ROOT) not in sys.path:
 
 import channels.social_youtube as youtube_channel
 from channels.innertube import configure_pacing, refresh_client_version
-
-
-def _supports(fn: Any, name: str) -> bool:
-    try:
-        return name in inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 def _apply_transport(name: str) -> bool:
@@ -99,7 +91,6 @@ def main() -> int:
     parser.add_argument("--max-comments", type=int, default=300)
     parser.add_argument("--max-replies", type=int, default=50)
     parser.add_argument("--unlimited", action="store_true", help="ignore both record caps")
-    parser.add_argument("--workers", default="1,4", help="comma separated reply_workers values")
     parser.add_argument("--transports", default="urllib,curl", help="comma separated transport names")
     parser.add_argument(
         "--pacing-ms",
@@ -121,12 +112,6 @@ def main() -> int:
     refresh_client_version()
     configure_pacing(args.pacing_ms / 1000.0)
 
-    supports_workers = _supports(youtube_channel.YouTubeChannel._fetch_innertube_comments, "reply_workers")
-    workers = [int(w) for w in args.workers.split(",") if w.strip()]
-    if not supports_workers:
-        print("note: reply_workers not wired yet, running serial only")
-        workers = [1]
-
     print(f"video {args.url}")
     print(
         f"caps  max_comments={max_comments} max_replies={max_replies} "
@@ -138,16 +123,14 @@ def main() -> int:
         if not _apply_transport(transport):
             print(f"note: transport {transport!r} not available yet, skipped")
             continue
-        for worker_count in workers:
-            config: Dict[str, Any] = {
-                "max_comments": max_comments,
-                "max_replies_per_comment": max_replies,
-                "reply_workers": worker_count,
-            }
-            for index in range(args.repeat):
-                run = _run_once(args.url, config)
-                label = f"{transport}/workers={worker_count}#{index + 1}"
-                print(_fmt_row(label, run))
+        config: Dict[str, Any] = {
+            "max_comments": max_comments,
+            "max_replies_per_comment": max_replies,
+        }
+        for index in range(args.repeat):
+            run = _run_once(args.url, config)
+            label = f"{transport}#{index + 1}"
+            print(_fmt_row(label, run))
 
     print("-" * 118)
     print("com/s = comments collected per wall second; ms/req = mean time inside post_innertube")

@@ -81,7 +81,6 @@ class YouTubeSocialConfig(BaseModel):
     max_runtime_seconds: Optional[int] = Field(default=None, description="Wall-clock budget per run, None for unlimited")
     max_seconds_per_video: Optional[int] = Field(default=None, description="Soft stop per video, None for unlimited")
     video_workers: int = Field(default=4, ge=1, description="Videos harvested concurrently")
-    reply_workers: int = Field(default=4, ge=1, description="Threads used to fetch reply threads")
     request_min_interval_ms: int = Field(default=250, ge=0, description="Minimum gap between InnerTube requests")
     progress_every: int = Field(default=500, ge=1, description="Log progress every N comments")
     yt_dlp_max_comments: int = Field(default=20000, ge=1, description="Ceiling for the yt-dlp fallback, which buffers in memory")

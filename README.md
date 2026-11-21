@@ -46,7 +46,7 @@ Generic HTML scrapers frequently lose article bodies when encountering complex J
 
 ### 4. Multi-Channel Social Discourse Harvesting
 Beyond static news websites, Horus ingests related public discourse from social platforms:
-* YouTube InnerTube Transport: Discovers topic-relevant videos and extracts deep nested comment threads and replies using authenticated InnerTube calls, SAPISIDHASH signing, and configurable concurrency pools.
+* YouTube InnerTube Transport: Discovers topic-relevant videos and extracts deep nested comment threads and replies using authenticated InnerTube calls, SAPISIDHASH signing, configurable video concurrency, and request pacing.
 * Twitter / X GraphQL Gateway: Performs keyword search and handle timeline extraction through Twitter Web GraphQL APIs with automated session token extraction from local Firefox browser profiles.
 
 ### 5. Resilient Concurrency and Quality Control

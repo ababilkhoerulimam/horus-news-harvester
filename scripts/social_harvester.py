@@ -166,7 +166,6 @@ def harvest_youtube(
                 config={
                     "max_comments": social.max_comments_per_video,
                     "max_replies_per_comment": social.max_replies_per_comment,
-                    "reply_workers": social.reply_workers,
                     "deadline": deadline,
                     "on_progress": _progress_logger(video_id, social.progress_every),
                 },

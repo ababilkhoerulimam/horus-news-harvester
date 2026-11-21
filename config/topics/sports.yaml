@@ -71,7 +71,6 @@ social:
     max_replies_per_comment: null
     max_runtime_seconds: null
     max_seconds_per_video: null
-    reply_workers: 4
     request_min_interval_ms: 250
     progress_every: 500
   twitter:

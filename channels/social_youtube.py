@@ -9,7 +9,6 @@ import logging
 import re
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -521,25 +520,6 @@ class YouTubeChannel(SportsChannel):
 
         return replies
 
-    def _safe_replies(
-        self,
-        reply_token: str,
-        max_replies: Optional[int],
-        parent_id: str,
-        deadline: Optional[float],
-    ) -> List[Dict[str, Any]]:
-        """Worker entry point: one failing thread must not take the whole pool down."""
-        try:
-            return self._fetch_innertube_replies(
-                reply_token,
-                max_replies=max_replies,
-                parent_id=parent_id,
-                deadline=deadline,
-            )
-        except Exception as exc:
-            logger.warning("[youtube] reply fetch failed for %s: %s", parent_id, exc)
-            return []
-
     def _fetch_innertube_comments(
         self,
         init_token: Optional[str],
@@ -548,7 +528,6 @@ class YouTubeChannel(SportsChannel):
         fetch_replies: bool = True,
         deadline: Optional[float] = None,
         on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
-        reply_workers: int = 1,
     ) -> CommentHarvest:
         """Walks the comment continuation chain until it ends or a guard fires.
 
@@ -556,10 +535,6 @@ class YouTubeChannel(SportsChannel):
         path: empty token, budget, deadline, two empty pages, a repeated token, or
         the safety valve. Without the last three an uncapped run can spin forever
         on a cursor that keeps returning the same page.
-
-        reply_workers above 1 fetches reply threads from a pool. Each page is drained
-        before the next one is requested, so memory stays bounded and the reply order
-        stays deterministic regardless of worker count.
         """
         if not init_token:
             return CommentHarvest([], STOP_EXHAUSTED, 0, 0)
@@ -572,91 +547,61 @@ class YouTubeChannel(SportsChannel):
         empty_pages = 0
         replies_fetched = 0
         stop_reason = STOP_EXHAUSTED
-        executor = (
-            ThreadPoolExecutor(max_workers=reply_workers)
-            if fetch_replies and reply_workers > 1
-            else None
-        )
 
-        try:
-            while token:
-                if deadline is not None and time.monotonic() >= deadline:
-                    stop_reason = STOP_RUNTIME
-                    break
-                if max_comments is not None and len(collected) >= max_comments:
-                    stop_reason = STOP_MAX_COMMENTS
-                    break
-                if pages >= HARD_COMMENT_PAGES:
-                    logger.warning("[youtube] safety valve at %s comment pages", pages)
-                    stop_reason = STOP_SAFETY_VALVE
-                    break
-                if token in seen_tokens:
-                    logger.warning("[youtube] repeated comment token at page %s", pages)
-                    stop_reason = STOP_REPEATED_TOKEN
-                    break
+        while token:
+            if deadline is not None and time.monotonic() >= deadline:
+                stop_reason = STOP_RUNTIME
+                break
+            if max_comments is not None and len(collected) >= max_comments:
+                stop_reason = STOP_MAX_COMMENTS
+                break
+            if pages >= HARD_COMMENT_PAGES:
+                logger.warning("[youtube] safety valve at %s comment pages", pages)
+                stop_reason = STOP_SAFETY_VALVE
+                break
+            if token in seen_tokens:
+                logger.warning("[youtube] repeated comment token at page %s", pages)
+                stop_reason = STOP_REPEATED_TOKEN
+                break
 
-                seen_tokens.add(token)
-                pages += 1
-                payload = dict(INNERTUBE_CLIENT)
-                payload["continuation"] = token
-                try:
-                    page_json = post_innertube(INNERTUBE_URL_NEXT, payload, timeout=12, use_jitter=True)
-                except Exception as exc:
-                    logger.warning("[youtube] comment page %s failed: %s", pages, exc)
-                    stop_reason = STOP_PAGE_ERROR
-                    break
-                if page_json is None:
-                    stop_reason = STOP_PAGE_ERROR
-                    break
+            seen_tokens.add(token)
+            pages += 1
+            payload = dict(INNERTUBE_CLIENT)
+            payload["continuation"] = token
+            try:
+                page_json = post_innertube(INNERTUBE_URL_NEXT, payload, timeout=12, use_jitter=True)
+            except Exception as exc:
+                logger.warning("[youtube] comment page %s failed: %s", pages, exc)
+                stop_reason = STOP_PAGE_ERROR
+                break
+            if page_json is None:
+                stop_reason = STOP_PAGE_ERROR
+                break
 
-                remaining = None if max_comments is None else max_comments - len(collected)
-                page_comments, next_token = self._parse_innertube_comments_page(page_json, remaining, seen_ids)
+            remaining = None if max_comments is None else max_comments - len(collected)
+            page_comments, next_token = self._parse_innertube_comments_page(page_json, remaining, seen_ids)
 
-                pending_jobs: List[Tuple[Dict[str, Any], Any]] = []
-                for c in page_comments:
-                    reply_tok = c.pop("_reply_token", None)
-                    if not (fetch_replies and reply_tok):
-                        continue
-                    if executor is None:
-                        c["replies"] = self._fetch_innertube_replies(
-                            reply_tok,
-                            max_replies=max_replies_per_comment,
-                            parent_id=c["id"],
-                            deadline=deadline,
-                        )
-                        c["reply_count"] = max(c.get("reply_count", 0), len(c["replies"]))
-                        replies_fetched += len(c["replies"])
-                    else:
-                        pending_jobs.append(
-                            (
-                                c,
-                                executor.submit(
-                                    self._safe_replies,
-                                    reply_tok,
-                                    max_replies_per_comment,
-                                    c["id"],
-                                    deadline,
-                                ),
-                            )
-                        )
-
-                for c, future in pending_jobs:
-                    c["replies"] = future.result()
+            for c in page_comments:
+                reply_tok = c.pop("_reply_token", None)
+                if fetch_replies and reply_tok:
+                    c["replies"] = self._fetch_innertube_replies(
+                        reply_tok,
+                        max_replies=max_replies_per_comment,
+                        parent_id=c["id"],
+                        deadline=deadline,
+                    )
                     c["reply_count"] = max(c.get("reply_count", 0), len(c["replies"]))
                     replies_fetched += len(c["replies"])
 
-                collected.extend(page_comments)
-                empty_pages = 0 if page_comments else empty_pages + 1
-                if empty_pages >= 2:
-                    stop_reason = STOP_NO_PROGRESS
-                    break
+            collected.extend(page_comments)
+            empty_pages = 0 if page_comments else empty_pages + 1
+            if empty_pages >= 2:
+                stop_reason = STOP_NO_PROGRESS
+                break
 
-                token = next_token
-                if on_progress is not None:
-                    on_progress({"comments": len(collected), "replies": replies_fetched, "pages": pages})
-        finally:
-            if executor is not None:
-                executor.shutdown(wait=True)
+            token = next_token
+            if on_progress is not None:
+                on_progress({"comments": len(collected), "replies": replies_fetched, "pages": pages})
 
         return CommentHarvest(collected, stop_reason, pages, replies_fetched)
 
@@ -666,7 +611,6 @@ class YouTubeChannel(SportsChannel):
         video_id = self._extract_video_id(url)
         max_comments = config.get("max_comments", 50) if config else 50
         max_replies_per_comment = config.get("max_replies_per_comment", 10) if config else 10
-        reply_workers = config.get("reply_workers", 1) if config else 1
         deadline = config.get("deadline") if config else None
         on_progress = config.get("on_progress") if config else None
 
@@ -719,7 +663,6 @@ class YouTubeChannel(SportsChannel):
                         max_replies_per_comment=max_replies_per_comment,
                         deadline=deadline,
                         on_progress=on_progress,
-                        reply_workers=reply_workers,
                     )
                     record = build_video_record(
                         video_id,
