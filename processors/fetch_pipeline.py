@@ -9,6 +9,7 @@ from typing import Dict, Optional, Tuple
 from backends.wordpress_rest import fetch_post_body
 from channels.portal_news import extract_clean_article_text, is_cloudflare_challenge
 from processors import session_store
+from processors.cleaner import normalize_article
 from processors.http_client import default_http_client
 from processors.record_writer import MIN_QUALITY_CHARS, quality_of
 
@@ -113,13 +114,15 @@ async def fetch_article(
 
     if wp_api_base:
         post = await fetch_post_body(session, curl_backend, wp_api_base, url)
-        if post and len(post["content"]) >= min_content_length:
-            return _success(
-                post["content"],
-                "wordpress_rest",
-                post.get("title") or "",
-                min_quality_chars=min_quality_chars,
-            )
+        if post:
+            content = normalize_article(post.get("content") or "")
+            if len(content) >= min_content_length:
+                return _success(
+                    content,
+                    "wordpress_rest",
+                    post.get("title") or "",
+                    min_quality_chars=min_quality_chars,
+                )
 
     domain = _domain_of(url)
 
@@ -127,7 +130,9 @@ async def fetch_article(
         """Returns a result when this response is good enough to keep."""
         if status != 200 or not html or is_cloudflare_challenge(status, html):
             return None
-        content = extract_clean_article_text(html, domain)
+        # Normalize before the gate: a body that is only a dateline and a
+        # cross-link line should not pass just because those lines are long.
+        content = normalize_article(extract_clean_article_text(html, domain))
         if len(content) < min_content_length:
             return None
         return _success(content, backend, min_quality_chars=min_quality_chars)
@@ -165,7 +170,7 @@ async def fetch_article(
 
     res = await asyncio.to_thread(channel.extract, url, {"disable_headless": True})
     if res.get("status") == "success":
-        content = res.get("content") or ""
+        content = normalize_article(res.get("content") or "")
         if len(content) >= fallback_min_content_length:
             return _success(
                 content,

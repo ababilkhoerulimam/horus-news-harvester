@@ -353,5 +353,59 @@ class BackfillProcessItemTests(unittest.TestCase):
         self.assertEqual(sink.failed, [("https://detik.com/a", "HTTP 404 Not Found")])
 
 
+class ChannelExtractRecordTests(unittest.TestCase):
+    """Pins the thread fallback: normalize, gate, then build the record."""
+
+    class _Channel:
+        def __init__(self, result):
+            self.result = result
+            self.calls = 0
+
+        def extract(self, url, config=None):
+            self.calls += 1
+            return self.result
+
+    def _run(self, result, min_content_length=150):
+        from scripts.sitemap_backfill import _channel_extract_record
+
+        channel = self._Channel(result)
+        return _channel_extract_record(
+            {"url": "https://detik.com/a", "title": "Judul"},
+            channel,
+            min_content_length,
+        )
+
+    def test_dateline_is_removed_before_the_record_is_built(self):
+        record, error = self._run({
+            "status": "success",
+            "content": "Jakarta - " + "Laga berjalan sengit. " * 10,
+            "backend": "direct_http",
+        })
+
+        self.assertIsNone(error)
+        self.assertTrue(record["content"].startswith("Laga berjalan"))
+        self.assertNotIn("Jakarta", record["content"])
+        self.assertEqual(record["content_chars"], len(record["content"]))
+        self.assertEqual(record["title"], "Judul")
+
+    def test_a_page_that_is_only_a_dateline_fails_the_gate(self):
+        from processors.fetch_pipeline import REASON_TOO_SHORT
+
+        record, error = self._run({
+            "status": "success",
+            "content": "Jakarta - Laga berjalan sengit.",
+            "backend": "direct_http",
+        }, min_content_length=25)
+
+        self.assertIsNone(record)
+        self.assertEqual(error, REASON_TOO_SHORT)
+
+    def test_a_failed_extraction_reports_its_own_reason(self):
+        record, error = self._run({"status": "failed", "content": "", "error": "blocked"})
+
+        self.assertIsNone(record)
+        self.assertEqual(error, "blocked")
+
+
 if __name__ == "__main__":
     unittest.main()

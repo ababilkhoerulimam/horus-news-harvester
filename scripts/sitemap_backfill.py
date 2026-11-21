@@ -28,7 +28,7 @@ if str(REPO_ROOT) not in sys.path:
 from backends.curl_impersonate import CurlImpersonateBackend
 from channels.portal_news import PortalNewsChannel, normalize_portal_url
 from processors.ad_filter import is_ad_domain
-from processors.cleaner import normalize_timestamp
+from processors.cleaner import normalize_article, normalize_timestamp
 from processors.crawl_frontier import CrawlFrontier, DEFAULT_FRONTIER_DB, interleave_by_portal
 from processors.fetch_pipeline import REASON_TOO_SHORT, fetch_article
 from processors.portal_catalog import wp_api_base_for
@@ -816,6 +816,34 @@ def fetch_wordpress_rest_articles(
     return collected
 
 
+def _channel_extract_record(
+    cand: Dict[str, Any],
+    channel,
+    min_content_length: int,
+):
+    """Extracts one candidate through the channel only, for the thread fallback.
+
+    Returns `(record, None)` when the page passed the gate, or `(None, reason)`
+    when it did not, so the caller can tell a failed fetch from a short page
+    without inspecting the response a second time.
+    """
+    res = channel.extract(cand["url"], config={"disable_headless": True})
+    if res.get("status") != "success":
+        return None, res.get("error", "Extraction failed")
+    content = normalize_article(res.get("content") or "")
+    if len(content) < min_content_length:
+        return None, REASON_TOO_SHORT
+    record = build_news_record(
+        url=cand["url"],
+        title=cand.get("title") or res.get("title"),
+        published_date=cand.get("published_date") or res.get("published_date"),
+        archive_date=cand.get("archive_date", ""),
+        content=content,
+        backend=res.get("backend", "direct_http"),
+    )
+    return record, None
+
+
 def _backfill_process_item(
     session,
     curl_backend,
@@ -1138,34 +1166,21 @@ def run_sitemap_backfill(
                 nonlocal written_count
                 u = cand["url"]
                 try:
-                    res = channel.extract(u, config={"disable_headless": True})
-                    if res.get("status") == "success":
-                        content = res.get("content", "").strip()
-                        if len(content) >= min_content_length:
-                            record = build_news_record(
-                                url=u,
-                                title=cand.get("title") or res.get("title"),
-                                published_date=cand.get("published_date") or res.get("published_date"),
-                                archive_date=cand.get("archive_date", ""),
-                                content=content,
-                                backend=res.get("backend", "direct_http"),
-                            )
-                            line = json.dumps(record, ensure_ascii=False) + "\n"
-                            with file_lock:
-                                with open(out_path, "a", encoding="utf-8") as f:
-                                    f.write(line)
-                                    f.flush()
-                                written_count += 1
-
-                            with db_lock:
-                                frontier.mark_completed(u)
-                            return True
-                        else:
-                            with db_lock:
-                                frontier.mark_failed(u, error=REASON_TOO_SHORT)
-                    else:
+                    record, error = _channel_extract_record(cand, channel, min_content_length)
+                    if record is None:
                         with db_lock:
-                            frontier.mark_failed(u, error=res.get("error", "Extraction failed"))
+                            frontier.mark_failed(u, error=error)
+                        return False
+                    line = json.dumps(record, ensure_ascii=False) + "\n"
+                    with file_lock:
+                        with open(out_path, "a", encoding="utf-8") as f:
+                            f.write(line)
+                            f.flush()
+                        written_count += 1
+
+                    with db_lock:
+                        frontier.mark_completed(u)
+                    return True
                 except Exception as e:
                     with db_lock:
                         frontier.mark_failed(u, error=str(e))

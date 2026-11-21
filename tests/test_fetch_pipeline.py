@@ -118,6 +118,42 @@ class TestFetchArticleLadder(unittest.TestCase):
         self.assertIsNone(res.reason)
         self.assertEqual(len(res.content), 20)
 
+    def test_dateline_is_stripped_before_the_length_gate(self):
+        # 32 chars before normalization, 22 after: the gate must see the 22.
+        curl = FakeCurlBackend([(200, ARTICLE_HTML)])
+        channel = FakeChannel({'status': 'failed', 'content': ''})
+        with patch(
+            'processors.fetch_pipeline.extract_clean_article_text',
+            return_value='Jakarta - Laga berjalan sengit.',
+        ):
+            res = self._run(curl, channel, min_length=25)
+        self.assertEqual(res.reason, REASON_TOO_SHORT)
+        self.assertIsNone(res.content)
+
+    def test_direct_content_is_returned_without_the_dateline(self):
+        curl = FakeCurlBackend([(200, ARTICLE_HTML)])
+        channel = FakeChannel({'status': 'failed', 'content': ''})
+        with patch(
+            'processors.fetch_pipeline.extract_clean_article_text',
+            return_value='Jakarta - ' + 'Laga berjalan sengit. ' * 10,
+        ):
+            res = self._run(curl, channel)
+        self.assertIsNone(res.reason)
+        self.assertTrue(res.content.startswith('Laga berjalan'))
+        self.assertNotIn('Jakarta', res.content)
+
+    def test_channel_fallback_content_is_normalized_too(self):
+        curl = FakeCurlBackend([(200, '<html><body><p>pendek</p></body></html>')])
+        channel = FakeChannel({
+            'status': 'success',
+            'content': 'KOMPAS.com - ' + 'Laga berjalan sengit. ' * 10,
+            'backend': 'direct_http',
+        })
+        res = self._run(curl, channel)
+        self.assertIsNone(res.reason)
+        self.assertTrue(res.content.startswith('Laga berjalan'))
+        self.assertNotIn('KOMPAS.com', res.content)
+
     def test_success_carries_body_length_and_quality(self):
         curl = FakeCurlBackend([(200, ARTICLE_HTML)])
         channel = FakeChannel({'status': 'success', 'content': 'x' * 200})
