@@ -55,6 +55,95 @@ def clean_news_text(raw_text: str) -> str:
     return text.strip()
 
 
+# --- article normalization (prototype, Change 4 step 2) ---------------------
+#
+# Ported from horus-graph `scripts/korpus_sumber.py` (`_TAK_TAMPAK`, `_DATELINE`,
+# `_BACA_JUGA`, `_JUDUL_BOILER`) with one addition: a bare city dateline such as
+# "Jakarta - ", which the original pattern does not catch and which is the
+# dominant form in this corpus.
+#
+# Additive: `clean_news_text` is unchanged, so nothing calls these functions
+# until a caller opts in. Numbers behind the rules: `_audit/horus_reuse.md`.
+
+# Bidi and word-joiner marks. `ZERO_WIDTH_CHARS` above already covers U+200B to
+# U+200D and U+FEFF; these are the ones it misses.
+_BIDI = re.compile("[\u200e\u200f\u202a-\u202e\u2060]")
+
+_DOMAIN = r"[\w\-]+(?:\.[\w\-]+)*[.,](?i:com|co\.id|id|net|tv)\b"
+
+# Every alternative is anchored at the start of the body. `[*_]{0,2}` tolerates
+# markdown emphasis left by the extractor ("**BANDUNG**- "). The order matters
+# only for attribution in the audit script, not for the combined pattern.
+DATELINE_PATTERNS = (
+    ("domain_city", re.compile(
+        rf"^\s*[*_]{{0,2}}{_DOMAIN}\s*,\s*[A-Z][A-Za-z .]{{2,30}},?\s*[-\u2013\u2014]\s*")),
+    ("city_domain", re.compile(
+        rf"^\s*[*_]{{0,2}}[A-Z][A-Za-z .]{{2,30}},\s*{_DOMAIN}\s*[-\u2013\u2014]\s*")),
+    ("domain_only", re.compile(
+        rf"^\s*[*_]{{0,2}}{_DOMAIN}(?:\s+[A-Z]\w*){{0,3}}[*_]{{0,2}}\s*[-\u2013\u2014]\s*")),
+    ("city_agency", re.compile(
+        r"^\s*[*_]{0,2}[A-Z][A-Za-z .]{2,30}\s*\([^()\n]{2,30}\)\s*[-\u2013\u2014]\s*")),
+    ("city_caps", re.compile(
+        r"^\s*[*_]{0,2}[A-Z][A-Z0-9]{2,}(?:\s+[A-Z][A-Z0-9]{2,}){0,2}[*_]{0,2}"
+        r"(?:\s*[\u2013\u2014]\s*|\s+-[ \t]*)")),
+    ("bare_city", re.compile(
+        r"^\s*[*_]{0,2}[A-Z][a-z]{2,15}(?:\s+[A-Z][a-z]{2,15})?[*_]{0,2}"
+        r"\s*[-\u2013\u2014]\s+")),
+)
+
+_DATELINE = re.compile("(?:" + "|".join(p.pattern for _, p in DATELINE_PATTERNS) + ")")
+
+# A "Baca juga" line links to a different article. `AD_PATTERNS` above only
+# matches it when a colon follows, which leaves the no-colon form in the text.
+_BACA_JUGA_LINE = re.compile(r"^[ \t]*(?:baca|simak)\s+juga\b.*$", re.IGNORECASE | re.MULTILINE)
+
+# The outlet suffix in a headline is not part of the headline.
+_TITLE_OUTLET = re.compile(
+    r"\s*[|\u2013\u2014-]\s*[\w.\-]+\.(?:co\.id|com|co|id|net|tv|news|org)\s*$",
+    re.IGNORECASE,
+)
+
+# Stacked datelines happen ("KOMPAS.com - Jakarta - ..."); three passes is the
+# bound horus measured, and a fourth never fired there.
+DATELINE_REPEAT_MAX = 3
+
+
+def strip_dateline(text: str) -> str:
+    """Removes leading desk-city datelines, up to three stacked ones.
+
+    "Jakarta - BRI Super League ..." becomes "BRI Super League ...".
+    """
+    body = text
+    for _ in range(DATELINE_REPEAT_MAX):
+        stripped = _DATELINE.sub("", body, count=1)
+        if stripped == body:
+            break
+        body = stripped
+    return body
+
+
+def normalize_article(body: str) -> str:
+    """Body text without bidi marks, datelines, or cross-link lines.
+
+    Paragraph breaks are kept: only runs of spaces and tabs are collapsed, so a
+    caller can still tell paragraphs apart after normalization.
+    """
+    if not body:
+        return ""
+    text = _BIDI.sub("", body)
+    text = _BACA_JUGA_LINE.sub("", text)
+    text = strip_dateline(text)
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def normalize_title(title: str) -> str:
+    """Title without bidi marks or the outlet suffix ("... | detik.com")."""
+    if not title:
+        return ""
+    text = _TITLE_OUTLET.sub("", _BIDI.sub("", title).strip())
+    return " ".join(text.split())
+
+
 
 
 def normalize_timestamp(raw_date: Optional[str], base_time: Optional[datetime] = None) -> str:
